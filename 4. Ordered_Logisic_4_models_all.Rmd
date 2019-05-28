@@ -1,0 +1,1580 @@
+---
+title: "| AQM Paper-Modeling, Quantitatives of Interest and Robustness Check"
+author: "Roman, Bengi, Annika"
+date: "5 June 2018"
+output:
+  html_document: default
+  html_notebook:
+    toc: yes
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+
+```{r}
+p_needed <- c("knitr", "MASS", "separationplot", "ggplot2", "reshape2", "ggthemes", "nnet","dplyr")
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+```
+
+
+```{r}
+load("3_RecodedVariables_wv6_all.Rdata")
+table(final_wv6_recoded$political_trust_ordered)
+head(final_wv6_recoded)
+```
+
+```{r}
+final_wv6_recoded$gdp_new=final_wv6_recoded$gdp/1000
+```
+
+Creating the dummy variable using democracy index, to specify which countries are democratic and which are non democratic. In order to decide the threshold definitions the code book of the index has been looked at https://www.yabiladi.com/img/content/EIU-Democracy-Index-2015.pdf. They categorised the countries based on their index into four groups: authoritarian regimes (0 to 4), hybrid regimes (4 to 6), flawed democracy (6-8), full democracy (8-10). The definitions are as follows:
+
+Full democracies are nations where civil liberties and basic political freedoms are not only respected, but also reinforced by a political culture conducive to the thriving of democratic principles. These nations have a valid system of governmental checks and balances, independent judiciary whose decisions are enforced, governments that function adequately, and media that is diverse and independent. These nations have only limited problems in democratic functioning.
+
+Flawed democracies are nations where elections are fair and free and basic civil liberties are honored but may have issues (e.g. media freedom infringement). Nonetheless, these nations have significant faults in other democratic aspects, including underdeveloped political culture, low levels of participation in politics, and issues in the functioning of governance.
+
+Hybrid regimes are nations where consequential irregularities exist in elections regularly preventing them from being fair and free. These nations commonly have governments that apply pressure on political opponents, non independent judiciaries, and have widespread corruption, harassment and pressure placed on the media, anemic rule of law, and more pronounced faults than flawed democracies in the realms of underdeveloped political culture, low levels of participation in politics, and issues in the functioning of governance.
+
+Authoritarian regimes are nations where political pluralism has vanished or is extremely limited. These nations are often absolute monarchies or dictatorships, may have some conventional institutions of democracy but with meager significance, infringements and abuses of civil liberties are commonplace, elections (if they take place) are not fair and free, the media is often state-owned or controlled by groups associated with the ruling regime, the judiciary is not independent, and they are characterised by the presence of omnipresent censorship and suppression of governmental criticism.
+
+Based on the above described definitions, we define the threshold as 6. So if a country has an index more than 6, then it's count as democratic.
+```{r}
+final_wv6_recoded$democ_dummy=final_wv6_recoded$democ_index
+final_wv6_recoded$democ_dummy[final_wv6_recoded$democ_dummy<6]=0
+final_wv6_recoded$democ_dummy[final_wv6_recoded$democ_dummy>=6]=1
+
+table(final_wv6_recoded$democ_dummy)
+table(final_wv6_recoded$democ_index)
+#if(final_wv6_recoded$democ_index>6)
+```
+
+
+# 1. Descriptive Statistics
+## Figure 4 - Distribution of Dependent Variable
+```{r}
+ggplot(data = final_wv6_recoded) +
+  geom_bar(mapping = aes(x = political_trust_ordered), fill = c("#D7191C", "#FDAE61", "#756BB1","#ABDDA4", "#2B83BA")) +
+  xlab("Political Trust Summary Scale") + ylab("Count") +
+  ggtitle("") +theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))
+ggsave("dependent_variable.png",plot = last_plot())
+```
+
+## Figure 5 - Descriptive Statistics of CPI
+```{r}
+by_country <- group_by(final_wv6_recoded, country_name)
+by_country_edu <- group_by(by_country, country_name, edu)
+
+by_country_edu$political_trust_ordered <- as.numeric(by_country_edu$political_trust_ordered)
+wv6_country_edu <- summarise(by_country_edu,
+                         trust = mean(political_trust_ordered,
+                                      na.rm = TRUE),
+                         corruption = mean(cpi, na.rm = TRUE), democ_index = mean(democ_index, na.rm = TRUE))
+```
+
+### Figure 5a - Democratic States
+```{r}
+# Keep only lowest and highest educated people
+wv6_country_edu_subset <- subset(wv6_country_edu,
+                                 edu == 0 | edu == 3)
+wv6_country_edu_subset <- subset(wv6_country_edu_subset,
+                                  democ_index >= 6)
+wv6_country_edu_subset$edu2 <- as.factor(wv6_country_edu_subset$edu)
+
+figure4_democ <- ggplot(wv6_country_edu_subset,
+            aes(x = reorder(country_name, corruption, FUN = mean),
+                y = trust))
+
+figure4_democ + geom_bar(stat = "identity", 
+                   aes(fill = edu), position = "dodge",
+                   width=0.7) +
+  xlab("Countries sorted by CPI") + ylab("Political Trust") +
+  ggtitle("Democracies") +
+  theme_bw() +
+  coord_flip() +
+  scale_fill_discrete(name="",
+                      labels=c("Lowest educated", "Highest educated"))
+
+ggsave("Figure5_democracy.png")
+```
+### Figure 5b - Non Democratic States
+
+```{r}
+by_country_edu <- group_by(by_country, country_name, edu)
+
+by_country_edu$political_trust_ordered <- as.numeric(by_country_edu$political_trust_ordered)
+wv6_country_edu <- summarise(by_country_edu,
+                         trust = mean(political_trust_ordered,
+                                      na.rm = TRUE),
+                         corruption = mean(cpi, na.rm = TRUE), democ_index = mean(democ_index, na.rm = TRUE))
+# Keep only lowest and highest educated people
+wv6_country_edu_subset <- subset(wv6_country_edu,
+                                 edu == 0 | edu == 3)
+wv6_country_edu_subset <- subset(wv6_country_edu_subset,
+                                 democ_index < 6)
+wv6_country_edu_subset$edu <- as.factor(wv6_country_edu_subset$edu)
+# Plot data according to graph p.745!
+figure4_NonDemoc <- ggplot(wv6_country_edu_subset,
+            aes(x = reorder(country_name, corruption, FUN = mean),
+                y = trust))
+
+figure4_NonDemoc + geom_bar(stat = "identity", 
+                   aes(fill = edu), position = "dodge",
+                   width=0.7) +
+  xlab("") + ylab("Political Trust") +
+  ggtitle("Non-Democracies") +
+  theme_bw() +
+  coord_flip() +
+  scale_fill_discrete(name="",
+                      labels=c("Lowest educated", "Highest educated"))
+
+ggsave("Figure5_NonDemocracy.png")
+```
+# 2. Modeling
+
+## 2.1.Model 1
+No democratic variable
+```{r}
+final_wv6_recoded$political_trust_ordered <- as.factor(final_wv6_recoded$political_trust_ordered)
+
+model_1 <- polr(political_trust_ordered ~ relevel(edu,ref='0')+cpi+relevel(edu,ref='0')*cpi+ male+age+rel_dummy+church_dummy+income+trust_dummy +econ_satis+gdp_new+unemployment+region,data = final_wv6_recoded, Hess=TRUE)
+
+summary(model_1)
+```
+
+```{r}
+ctable <- coef(summary(model_1))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = round(p,digits = 6))
+ctable
+```
+
+## 2.2.Model 2
+Now we controlled for democracy dummy variable
+```{r}
+final_wv6_recoded$political_trust_ordered <- as.factor(final_wv6_recoded$political_trust_ordered)
+
+model_2 <- polr(political_trust_ordered ~ relevel(edu,ref='0')+cpi+relevel(edu,ref='0')*cpi+ male+age+rel_dummy+church_dummy+income+trust_dummy +econ_satis+gdp_new+unemployment+region+democ_dummy,data = final_wv6_recoded, Hess=TRUE)
+
+summary(model_2)
+```
+```{r}
+ctable <- coef(summary(model_2))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = round(p,digits = 6))
+ctable
+```
+
+## 2.3.Model 3
+Triple interaction effect
+```{r}
+final_wv6_recoded$political_trust_ordered <- as.factor(final_wv6_recoded$political_trust_ordered)
+
+model_3 <- polr(political_trust_ordered ~ relevel(edu,ref='0')+cpi+relevel(edu,ref='0')*cpi+ male+age+rel_dummy+church_dummy+income+trust_dummy +econ_satis+gdp_new+unemployment+region+democ_dummy+relevel(edu,ref='0')*democ_dummy+democ_dummy*cpi+ relevel(edu,ref='0')*democ_dummy*cpi,data = final_wv6_recoded, Hess=TRUE)
+
+summary(model_3)
+```
+
+```{r}
+ctable <- coef(summary(model_3))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = round(p,digits = 6))
+ctable
+```
+
+# 3. Quantities of Interest of Education (model 3)
+We focused on model 3 for our quantities of interest. 
+
+Creating X and Z's to be used in quantities of interest. 
+```{r}
+#install.packages('dummies')
+library(dummies)
+dummied=dummy.data.frame(final_wv6_recoded, c('edu','region'))
+head(dummied)
+final_wv6_recoded$political_trust_ordered=as.factor(final_wv6_recoded$political_trust_ordered)
+
+
+X=cbind(dummied$edu1,dummied$edu2,dummied$edu3,dummied$cpi,dummied$male,dummied$age,dummied$rel_dummy,dummied$church_dummy,dummied$income,dummied$trust_dummy,dummied$econ_satis,dummied$gdp_new,dummied$unemployment,dummied$`regionEurope & Central Asia`,dummied$`regionLatin America & Caribbean`,dummied$`regionMiddle East & North Africa`,dummied$`regionNorth America`,dummied$`regionSouth Asia`,dummied$`regionSub-Saharan Africa`,dummied$democ_dummy,dummied$edu1*dummied$cpi,dummied$edu2*dummied$cpi,dummied$edu3*dummied$cpi,dummied$edu1*dummied$democ_dummy,dummied$edu2*dummied$democ_dummy,dummied$edu3*dummied$democ_dummy,dummied$cpi*dummied$democ_dummy,dummied$edu1*dummied$cpi*dummied$democ_dummy,dummied$edu2*dummied$cpi*dummied$democ_dummy,dummied$edu3*dummied$cpi*dummied$democ_dummy)
+
+dim(X) #30 coefficients, including new interactions
+
+table(final_wv6_recoded$political_trust_ordered)
+cats=sort(unique(final_wv6_recoded$political_trust_ordered)) # Different categories
+J <- length(unique(final_wv6_recoded$political_trust_ordered))  # Number of categories
+Z <- matrix(NA, nrow = length(final_wv6_recoded$political_trust_ordered), ncol = J)  # Empty indicator matrix
+
+
+for(j in 1:J){
+  Z[, j] <- final_wv6_recoded$political_trust_ordered == cats[j]
+}
+head(Z)
+```
+
+## 3.1.Simulation of Education & Probability of Political Trust
+- With uncertainty we are examining education levels for each level in ordinal logistic regression while holding everything at the mean or most frequent value.
+(This is not added to the paper)
+
+```{r}
+k <- ncol(X) #30
+J <- ncol(Z) #5
+
+dim(X) #50199  x  23
+varcov <- vcov(model_3) 
+mu <- model_3$coefficients #30 coefficients
+zeta<-model_3$zeta #4 zetas
+mu<-c(mu,zeta) #34 total
+
+nsim <- 1000
+library(MASS)
+S <- mvrnorm(nsim, mu, varcov) #generate sampling distribution
+dim(S) #1000x34
+
+simulation_calc <- function(X,S,J){
+  probs_ed1 <- matrix(nrow = nrow(S), ncol = J)
+  for(i in 1:nrow(S)){  #1000 times
+    # Subset theta
+    beta <- S[i,1:30]
+    tau <- sort(S[i,31:34])
+    # Linear Predictor
+    U <- X %*% beta  
+    # Probabilities in a matrix
+    # The first category is different
+    probs_ed1[i, 1] <- exp(tau[1] - U) / (1 + exp(tau[1] - U)) 
+    # Now the categories in between
+    for (j in 2:(J - 1)){
+      probs_ed1[i, j] <- exp(tau[j] - U) / (1 + exp(tau[j] - U)) - 
+        exp(tau[j - 1] - U) / (1 + exp(tau[j - 1] - U))
+  } 
+  # And the last category is different again.
+  probs_ed1[i, J] <- 1 - exp(tau[J - 1] - U) / (1 + exp(tau[J - 1] - U))
+  }
+  return(probs_ed1)
+}
+```
+
+Finding meaningful scenarios:
+```{r}
+table(final_wv6_recoded$edu) #upper and post secondary educated people are more frequent
+table(final_wv6_recoded$male) # woman are more frequent, but taking man
+table(final_wv6_recoded$rel_dummy) #more religious people are present, take religious people
+table(final_wv6_recoded$church_dummy) #people go to church take 1
+table(final_wv6_recoded$trust_dummy) #this is the social trust, take 0
+table(final_wv6_recoded$region) #which region to focus on Europe & Central Asia
+table(final_wv6_recoded$democ_dummy) #take democracies
+```
+
+
+```{r}
+#probability of education 1:
+X_aca1 <- apply(X,2,mean) #30 of them 
+X_aca1[1]=0 #edu1
+X_aca1[2]=0 #edu2
+X_aca1[3]=0 #edu3
+X_aca1[20]=1 #democratic countries
+X_aca1 =cbind(X_aca1[1],X_aca1[2],X_aca1[3],X_aca1[4],1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,1,X_aca1[1]*X_aca1[4],X_aca1[2]*X_aca1[4],X_aca1[3]*X_aca1[4],X_aca1[1]*X_aca1[20],X_aca1[2]*X_aca1[20],X_aca1[3]*X_aca1[20],X_aca1[4]*X_aca1[20],X_aca1[1]*X_aca1[4]*X_aca1[20],X_aca1[2]*X_aca1[4]*X_aca1[20],X_aca1[3]*X_aca1[4]*X_aca1[20])
+probs_ed1=simulation_calc(X_aca1,S,J)
+probs_ed1_mean= apply(probs_ed1, 2, mean)
+probs_ed1_q=apply(probs_ed1, 2, quantile, c(0.025, 0.975))
+
+#Education-2
+X_aca2 <- apply(X,2,mean)
+X_aca2[1]=1
+X_aca2[2]=0
+X_aca2[3]=0
+X_aca2[20]=1 #democratic countries
+X_aca2=cbind(X_aca2[1],X_aca2[2],X_aca2[3],X_aca2[4],1,X_aca2[6],1,1,X_aca2[9],0,X_aca2[11],X_aca2[12],X_aca2[13],1,0,0,0,0,0,1,
+             X_aca2[1]*X_aca2[4],
+             X_aca2[2]*X_aca2[4],
+             X_aca2[3]*X_aca2[4],
+             X_aca2[1]*X_aca2[20],
+             X_aca2[2]*X_aca2[20],
+             X_aca2[3]*X_aca2[20]
+             ,X_aca2[4]*X_aca2[20],X_aca2[1]*X_aca2[4]*X_aca2[20],X_aca2[2]*X_aca2[4]*X_aca2[20],X_aca2[3]*X_aca2[4]*X_aca2[20])
+probs_ed2=simulation_calc(X_aca2,S,J)
+probs_ed2_mean= apply(probs_ed2, 2, mean)
+probs_ed2_q=apply(probs_ed2, 2, quantile, c(0.025, 0.975))
+
+#Education-3
+X_aca3 <- apply(X,2,mean)
+X_aca3[1]=0
+X_aca3[2]=1
+X_aca3[3]=0
+X_aca3[20]=1
+X_aca3=cbind(X_aca3[1],X_aca3[2],X_aca3[3],X_aca3[4],1,X_aca3[6],1,1,X_aca3[9],0,X_aca3[11],X_aca3[12],X_aca3[13],1,0,0,0,0,0,1,
+             X_aca3[1]*X_aca3[4],
+             X_aca3[2]*X_aca3[4],
+             X_aca3[3]*X_aca3[4],
+             X_aca3[1]*X_aca3[20],
+             X_aca3[2]*X_aca3[20],
+             X_aca3[3]*X_aca3[20]
+             ,X_aca3[4]*X_aca3[20],X_aca3[1]*X_aca3[4]*X_aca3[20],X_aca3[2]*X_aca3[4]*X_aca3[20],X_aca3[3]*X_aca3[4]*X_aca3[20])
+probs_ed3=simulation_calc(X_aca3,S,J)
+probs_ed3_mean= apply(probs_ed3, 2, mean)
+probs_ed3_q=apply(probs_ed3, 2, quantile, c(0.025, 0.975))
+
+#Education-4
+X_aca4 <- apply(X,2,mean)
+X_aca4[1]=0
+X_aca4[2]=0
+X_aca4[3]=1
+X_aca4[20]=1
+X_aca4=cbind(X_aca4[1],X_aca4[2],X_aca4[3],X_aca4[4],1,X_aca4[6],1,1,X_aca4[9],0,X_aca4[11],X_aca4[12],X_aca4[13],1,0,0,0,0,0,1,
+             X_aca4[1]*X_aca4[4],
+             X_aca4[2]*X_aca4[4],
+             X_aca4[3]*X_aca4[4],
+             X_aca4[1]*X_aca4[20],
+             X_aca4[2]*X_aca4[20],
+             X_aca4[3]*X_aca4[20]
+             ,X_aca4[4]*X_aca4[20],X_aca4[1]*X_aca4[4]*X_aca4[20],X_aca4[2]*X_aca4[4]*X_aca4[20],X_aca4[3]*X_aca4[4]*X_aca4[20])
+probs_ed4=simulation_calc(X_aca4,S,J)
+probs_ed4_mean= apply(probs_ed4, 2, mean)
+probs_ed4_q=apply(probs_ed4, 2, quantile, c(0.025, 0.975))
+
+probs_ed1_mean
+probs_ed2_mean
+probs_ed3_mean
+probs_ed4_mean
+
+```
+
+```{r}
+
+partycolors=c("#D7191C", "#FDAE61", "#756BB1", "#ABDDA4", "#2B83BA")
+plot( x=seq(0, 1, length.out=20), 
+      y = c(probs_ed1_mean[1],probs_ed2_mean[1],probs_ed3_mean[1],probs_ed4_mean[1],probs_ed1_mean[2],probs_ed2_mean[2],probs_ed3_mean[2],probs_ed4_mean[2],probs_ed1_mean[3],probs_ed2_mean[3],probs_ed3_mean[3],probs_ed4_mean[3],probs_ed1_mean[4],probs_ed2_mean[4],probs_ed3_mean[4],probs_ed4_mean[4],probs_ed1_mean[5],probs_ed2_mean[5],probs_ed3_mean[5],probs_ed4_mean[5]),
+      #xlim = c(0, 1), 
+      ylim = c(0, 0.6),
+      xlab = "", ylab = "Predicted Probability of Trusting",
+      main = "Education Levels",
+      type = "n",axes = F,las=1)
+
+#plot(1:100, cumsum(rnorm(100)), type="l", mgp=c(2,1,.5), las=1)
+abline(h = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6), 
+       col = adjustcolor("black", alpha = 0.2))
+points(x =seq(0, 1, length.out=20) , 
+       y = c(probs_ed1_mean[1],probs_ed2_mean[1],probs_ed3_mean[1],probs_ed4_mean[1],probs_ed1_mean[2],probs_ed2_mean[2],probs_ed3_mean[2],probs_ed4_mean[2],probs_ed1_mean[3],probs_ed2_mean[3],probs_ed3_mean[3],probs_ed4_mean[3],probs_ed1_mean[4],probs_ed2_mean[4],probs_ed3_mean[4],probs_ed4_mean[4],probs_ed1_mean[5],probs_ed2_mean[5],probs_ed3_mean[5],probs_ed4_mean[5]), pch = 19, cex = 0.8, col = partycolors)
+legend("topright", legend=c('No trust','low trust','average trust','high trust',' trust'),
+       col=partycolors, lty=1:2, cex=0.8)
+axis(1, at=c(0,0.25,0.5,0.76,1.01), labels=NA)
+axis(1, at=c(0.1,0.36,0.6,0.90), tick=FALSE, labels=c('Basic Education','Lower Secondary','Upper Secondary','BA and higher'),font=1,cex.axis=0.7)
+axis(2, at=seq(0, 0.6, length.out=7), labels=c('0','0.1','0.2','0.3','0.4','0.5','0.6'))
+segments(x0 = seq(0, 1, length.out=20), 
+         y0 = c(probs_ed1_q[1],probs_ed2_q[1],probs_ed3_q[1],probs_ed4_q[1],probs_ed1_q[3],probs_ed2_q[3],probs_ed3_q[3],probs_ed4_q[3],probs_ed1_q[5],probs_ed2_q[5],probs_ed3_q[5],probs_ed4_q[5],probs_ed1_q[7],probs_ed2_q[7],probs_ed3_q[7],probs_ed4_q[7],probs_ed1_q[9],probs_ed2_q[9],probs_ed3_q[9],probs_ed4_q[9]), 
+         y1 = c(probs_ed1_q[2],probs_ed2_q[2],probs_ed3_q[2],probs_ed4_q[2],probs_ed1_q[4],probs_ed2_q[4],probs_ed3_q[4],probs_ed4_q[4],probs_ed1_q[6],probs_ed2_q[6],probs_ed3_q[6],probs_ed4_q[6],probs_ed1_q[8],probs_ed2_q[8],probs_ed3_q[8],probs_ed4_q[8],probs_ed1_q[10],probs_ed2_q[10],probs_ed3_q[10],probs_ed4_q[10]) ,
+         lwd = 4, 
+         col = adjustcolor(partycolors, alpha = 0.4))
+```
+## 3.2.Simulation of CPI (Observed Value Approach)
+- Simulating uncertainity using cpi, no sceanario, based on whole dataset
+- Shows the relationship between CPI and dependent variable without any certain scenario
+Note: this takes a while to calculate
+
+```{r}
+partycolors=c("#D7191C", "#FDAE61", "#756BB1", "#ABDDA4", "#2B83BA")
+k <- ncol(X)
+J <- ncol(Z)
+
+varcov <- vcov(model_3) 
+mu <- model_3$coefficients #23 coefficients
+zeta<-model_3$zeta # 4 zetas
+mu<-c(mu,zeta) #27 (23 coefficients+4 zetas)
+nsim <- 50
+library(MASS)
+S <- mvrnorm(nsim, mu, varcov) #generate sampling distribution
+dim(S) #50x34
+
+cpi_sim=seq(0,10,length=50) #create scenarios for cpi 
+cases <- array(NA, c(dim(X), length(cpi_sim)))
+cases[, , ] <- X
+sel <- 4 # The column of X that contains cpi
+for (i in 1:length(cpi_sim)){ #simulate cpi, so interaction terms that will have cpi will change
+  cases[, sel, i] <- cpi_sim[i]
+  #replace the 21st variable which corresponds to the 
+  cases[, 21, i]=cases[, sel, i]*cases[, 1, i]  #replace it due to interaction effect for education level 2
+  cases[, 22, i]=cases[, sel, i]*cases[, 2, i]  #replace it due to interaction effect for education level 3
+  cases[, 23, i]=cases[, sel, i]*cases[, 3, i]  #replace it due to interaction effect for education level 4
+  cases[, 27, i]=cases[, sel, i]*cases[, 20, i]  #replace it due to interaction effect for democracy dummy
+  cases[, 28, i]=cases[, sel, i]*cases[, 20, i]*cases[, 1, i]  #replace it due to interaction effect for democracy dummy and education level2 
+  cases[, 29, i]=cases[, sel, i]*cases[, 20, i]*cases[, 2, i]  #replace it due to interaction effect for democracy dummy and education level3 
+  cases[, 30, i]=cases[, sel, i]*cases[, 20, i]*cases[, 3, i]  #replace it due to interaction effect for democracy dummy and education level3 
+  
+}
+
+#assume estimation uncertainity with simulation
+U <- array(NA, c(nrow(X),nrow(S),length(cpi_sim)))
+i=1
+while(i<=length(cpi_sim)){ #this is going to happen 100 times
+  for(k in 1:nrow(S)){ #this is going to happen 100 times
+    U[,k, i] <- cases[, , i] %*% S[k,1:30] #these are our predicted results
+  }
+  i=i+1
+}
+
+probs <- array(NA, c(nrow(X), nsim, length(cpi_sim),ncol(Z)))
+for(i in 1:length(cpi_sim)){ #this is going to be done 10 times
+  for(j in 1:nrow(S)){ #this is going to be done 100 times
+    #first 1 
+    probs[, j, i, 1] <- exp( S[j,31]- U[,j, i])/(1 + exp(S[j,31] - U[,j, i]))
+    probs[, j, i, 2] <- exp(S[j,32] - U[,j, i])/(1 + exp(S[j,32] - U[,j, i])) - exp(S[j,31]- U[,j, i])/(1 + exp(S[j,31] - U[,j, i]))
+    probs[, j, i, 3] <- exp(S[j,33] - U[,j, i])/(1 + exp(S[j,33] - U[,j, i])) - exp(S[j,32]- U[,j, i])/(1 + exp(S[j,32] - U[,j, i]))
+    probs[, j, i, 4] <- exp(S[j,34] - U[,j, i])/(1 + exp(S[j,34] - U[,j, i])) - exp(S[j,33]- U[,j, i])/(1 + exp(S[j,33] - U[,j, i]))
+    probs[, j, i, 5] <- 1 - exp(S[j,34] - U[,j, i])/(1 + exp(S[j,34] - U[,j, i])) 
+  }
+}
+
+
+#this is for the general:
+low_pr=probs[, , , 1] #first calculate low trust ones
+low_pr=apply(low_pr, c(2,3),function(x) mean(x))
+low_2_pr=probs[, , , 2] #first calculate  trust ones
+low_2_pr=apply(low_2_pr, c(2,3),function(x) mean(x))
+low_3_pr=probs[, , , 3] #first calculate average trust  ones
+low_3_pr=apply(low_3_pr, c(2,3),function(x) mean(x))
+low_4_pr=probs[, , , 4] #first calculate high trust ones
+low_4_pr=apply(low_4_pr, c(2,3),function(x) mean(x))
+low_5_pr=probs[, , , 5] #first calculate full trust ones
+low_5_pr=apply(low_5_pr, c(2,3),function(x) mean(x))
+
+
+#now the mean:
+low_pr_mean=apply(low_pr, 2,function(x) mean(x))
+low_pr_2_mean=apply(low_2_pr, 2,function(x) mean(x))
+low_pr_3_mean=apply(low_3_pr, 2,function(x) mean(x))
+low_pr_4_mean=apply(low_4_pr, 2,function(x) mean(x))
+low_pr_5_mean=apply(low_5_pr, 2,function(x) mean(x))
+
+#now the standard deviation:
+low_pr_q=apply(low_pr, 2,quantile, c(0.025, 0.975)) 
+low_pr_2_q=apply(low_2_pr,2, quantile, c(0.025, 0.975))
+low_pr_3_q=apply(low_3_pr,2, quantile, c(0.025, 0.975))
+low_pr_4_q=apply(low_4_pr,2, quantile, c(0.025, 0.975))
+low_pr_5_q=apply(low_5_pr,2, quantile, c(0.025, 0.975))
+
+```
+
+
+```{r}
+t=data.frame(cbind(cpi_sim,low_pr_mean,low_pr_2_mean,low_pr_3_mean,low_pr_4_mean,low_pr_5_mean))
+colnames(t) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+test_data_long <- melt(t, id="cpi")
+head(test_data_long)
+
+t_ci_low=data.frame(cbind(cpi_sim,low_pr_q[1,],low_pr_2_q[1,],low_pr_3_q[1,],low_pr_4_q[1,],low_pr_5_q[1,]))
+colnames(t_ci_low) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_ci_low <- melt(t_ci_low, id="cpi")
+
+
+t_ci_hi=data.frame(cbind(cpi_sim,low_pr_q[2,],low_pr_2_q[2,],low_pr_3_q[2,],low_pr_4_q[2,],low_pr_5_q[2,]))
+colnames(t_ci_hi) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_ci_hi <- melt(t_ci_hi, id="cpi")
+
+
+all_ci=cbind(test_data_long,t_ci_low$value,t_ci_hi$value)
+all_ci=data.frame(all_ci)
+colnames(all_ci) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+library("reshape2")
+library("ggplot2")
+
+ggplot(data=all_ci,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_ci,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))
+
+ggsave("Figure5_cpisim.png")
+
+```
+
+## 3.3.Simulation with Average Case Approach with Scenarios in DEMOCRACIES
+- Simulating uncertainity using cpi, sceanarios, based on whole dataset
+
+```{r}
+k <- ncol(X)
+J <- ncol(Z)
+
+dim(X) #50199  x  23
+varcov <- vcov(model_3) 
+mu <- model_3$coefficients #23 coefficients
+zeta<-model_3$zeta #4 zetas
+mu<-c(mu,zeta) #27 total
+
+nsim <- 1000
+library(MASS)
+S <- mvrnorm(nsim, mu, varcov) #generate sampling distribution
+dim(S) #1000x30
+
+cpi_sim=seq(0,10,length=50)
+
+simulation_education=function(X_ed_1,S,cpi_sim,Z){
+U <- array(NA, c(nrow(X_ed_1),nrow(S)))
+i=1
+while(i<=length(cpi_sim)){ #this is going to happen 50 times
+  for(k in 1:nrow(S)){ #this is going to happen 1000 times
+    U[i,k] <- X_ed_1[i, ] %*% S[k,1:30] #these are our predicted results
+  }
+  i=i+1
+}
+
+probs <- array(NA, c(nsim, length(cpi_sim),ncol(Z)))
+for(i in 1:length(cpi_sim)){ #this is going to be done 50 times
+  for(j in 1:nrow(S)){ #this is going to be done 1000 times
+    #first 1 
+    probs[j, i, 1] <- exp( S[j,31]- U[i, j])/(1 + exp(S[j,31] - U[i, j]))
+    probs[j, i, 2] <- exp(S[j,32] - U[i, j])/(1 + exp(S[j,32] - U[i, j])) - exp(S[j,31]- U[i,j])/(1 + exp(S[j,31] - U[i, j]))
+    probs[j, i, 3] <- exp(S[j,33] - U[i, j])/(1 + exp(S[j,33] - U[i, j])) - exp(S[j,32]- U[i, j])/(1 + exp(S[j,32] - U[i,j]))
+    probs[j, i, 4] <- exp(S[j,34] - U[i,j])/(1 + exp(S[j,34] - U[i,j])) - exp(S[j,33]- U[i,j])/(1 + exp(S[j,33] - U[i,j]))
+    probs[j, i, 5] <- 1 - exp(S[j,34] - U[i, j])/(1 + exp(S[j,34] - U[i,j])) 
+  }
+}
+return(probs)
+}
+
+head(X)
+```
+
+### 3.3.1.Basic Education
+```{r}
+#Basic Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=0
+X_aca1[3]=0
+X_aca1[20]=1 #democratic countries
+X_ed_1=cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,1,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20])
+
+#dummied$econ_satis,dummied$gdp_new,dummied$unemployment,dummied$`regionEurope & Central Asia`,dummied$`regionLatin America & Caribbean`,dummied$`regionMiddle East & North Africa`,dummied$`regionNorth America`,dummied$`regionSouth Asia`,dummied$`regionSub-Saharan Africa`,dummied$democ_dummy,dummied$edu1*dummied$cpi,dummied$edu2*dummied$cpi,dummied$edu3*dummied$cpi
+
+probs_ed_1=simulation_education(X_ed_1,S,cpi_sim,Z)
+low_pr_ed1=probs_ed_1[, , 1] #no trust
+low_pr_ed1_m=apply(low_pr_ed1, 2,function(x) mean(x))
+low_pr_ed1_q=apply(low_pr_ed1, 2,quantile, c(0.025, 0.975)) 
+low_pr_ed2=probs_ed_1[, , 2] #low trust
+low_pr_ed2_m=apply(low_pr_ed2, 2,function(x) mean(x))
+low_pr_ed2_q=apply(low_pr_ed2, 2,quantile, c(0.025, 0.975)) 
+low_pr_ed3=probs_ed_1[, , 3] #average trust
+low_pr_ed3_m=apply(low_pr_ed3, 2,function(x) mean(x))
+low_pr_ed3_q=apply(low_pr_ed3, 2,quantile, c(0.025, 0.975)) 
+low_pr_ed4=probs_ed_1[, , 4] #high trust
+low_pr_ed4_m=apply(low_pr_ed4, 2,function(x) mean(x))
+low_pr_ed4_q=apply(low_pr_ed4, 2,quantile, c(0.025, 0.975)) 
+low_pr_ed5=probs_ed_1[, , 5] #full trust
+low_pr_ed5_m=apply(low_pr_ed5, 2,function(x) mean(x))
+low_pr_ed5_q=apply(low_pr_ed5, 2,quantile, c(0.025, 0.975)) 
+
+t_low=data.frame(cbind(cpi_sim,low_pr_ed1_m,low_pr_ed2_m,low_pr_ed3_m,low_pr_ed4_m,low_pr_ed5_m))
+colnames(t_low) <- c("cpi","no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_low <- melt(t_low, id="cpi")
+
+t_low_cilow=data.frame(cbind(cpi_sim,low_pr_ed1_q[1,],low_pr_ed2_q[1,],low_pr_ed3_q[1,],low_pr_ed4_q[1,],low_pr_ed5_q[1,]))
+colnames(t_low_cilow) <- c("cpi","no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_low_cilow <- melt(t_low_cilow, id="cpi")
+
+t_low_cihi=data.frame(cbind(cpi_sim,low_pr_ed1_q[2,],low_pr_ed2_q[2,],low_pr_ed3_q[2,],low_pr_ed4_q[2,],low_pr_ed5_q[2,]))
+colnames(t_low_cihi) <- c("cpi","no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_low_cihi <- melt(t_low_cihi, id="cpi")
+
+all_low=cbind(t_low,t_low_cilow$value,t_low_cihi$value)
+colnames(all_low) <- c("cpi", "variable","value","low_ci","high_ci")
+
+g1_basic_democ=ggplot(data=all_low,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_low,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "Basic Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)+ theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))
+
+
+ggplot(data=all_low,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_low,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Basic Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+
+### 3.3.2.Lower Secondary Education
+```{r}
+#Lower Secondary Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=1
+X_aca1[2]=0
+X_aca1[3]=0
+X_aca1[20]=1 #democratic countries
+X_ed_2=cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,1,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20]))
+
+probs_ed_2=simulation_education(X_ed_2,S,cpi_sim,Z)
+lows_pr_ed1=probs_ed_2[, , 1] #no trust
+lows_pr_ed1_m=apply(lows_pr_ed1, 2,function(x) mean(x))
+lows_pr_ed1_q=apply(lows_pr_ed1, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed2=probs_ed_2[, , 2] #low trust
+lows_pr_ed2_m=apply(lows_pr_ed2, 2,function(x) mean(x))
+lows_pr_ed2_q=apply(lows_pr_ed2, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed3=probs_ed_2[, , 3] #average trust
+lows_pr_ed3_m=apply(lows_pr_ed3, 2,function(x) mean(x))
+lows_pr_ed3_q=apply(lows_pr_ed3, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed4=probs_ed_2[, , 4] #high trust
+lows_pr_ed4_m=apply(lows_pr_ed4, 2,function(x) mean(x))
+lows_pr_ed4_q=apply(lows_pr_ed4, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed5=probs_ed_2[, , 5] #full trust
+lows_pr_ed5_m=apply(lows_pr_ed5, 2,function(x) mean(x))
+lows_pr_ed5_q=apply(lows_pr_ed5, 2,quantile, c(0.025, 0.975))
+
+t_lows=data.frame(cbind(cpi_sim,lows_pr_ed1_m,lows_pr_ed2_m,lows_pr_ed3_m,lows_pr_ed4_m,lows_pr_ed5_m))
+colnames(t_lows) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_lows <- melt(t_lows, id="cpi")
+
+t_lows_cilow=data.frame(cbind(cpi_sim,lows_pr_ed1_q[1,],lows_pr_ed2_q[1,],lows_pr_ed3_q[1,],lows_pr_ed4_q[1,],lows_pr_ed5_q[1,]))
+colnames(t_lows_cilow) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_lows_cilow <- melt(t_lows_cilow, id="cpi")
+
+t_lows_cihi=data.frame(cbind(cpi_sim,lows_pr_ed1_q[2,],lows_pr_ed2_q[2,],lows_pr_ed3_q[2,],lows_pr_ed4_q[2,],lows_pr_ed5_q[2,]))
+colnames(t_lows_cihi) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_lows_cihi <- melt(t_lows_cihi, id="cpi")
+
+all_lows=cbind(t_lows,t_lows_cilow$value,t_lows_cihi$value)
+colnames(all_lows) <- c("cpi", "variable","value","low_ci","high_ci")
+
+ggplot(data=all_lows,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_lows,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Lower Secondary Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+### 3.3.3.Upper & Secondary Education
+```{r}
+#Upper and Post Secondary Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=1
+X_aca1[3]=0
+X_aca1[20]=1 #democratic countries
+X_ed_3=cbind(cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,1,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20])))
+
+probs_ed_3=simulation_education(X_ed_3,S,cpi_sim,Z)
+up_pr_ed1=probs_ed_3[, , 1] #no trust
+up_pr_ed1_m=apply(up_pr_ed1, 2,function(x) mean(x))
+up_pr_ed1_q=apply(up_pr_ed1, 2,quantile, c(0.025, 0.975)) 
+up_pr_ed2=probs_ed_3[, , 2] #low trust
+up_pr_ed2_m=apply(up_pr_ed2, 2,function(x) mean(x))
+up_pr_ed2_q=apply(up_pr_ed2, 2,quantile, c(0.025, 0.975)) 
+up_pr_ed3=probs_ed_3[, , 3] #average trust
+up_pr_ed3_m=apply(up_pr_ed3, 2,function(x) mean(x))
+up_pr_ed3_q=apply(up_pr_ed3, 2,quantile, c(0.025, 0.975)) 
+up_pr_ed4=probs_ed_3[, , 4] #high trust
+up_pr_ed4_m=apply(up_pr_ed4, 2,function(x) mean(x))
+up_pr_ed4_q=apply(up_pr_ed4, 2,quantile, c(0.025, 0.975)) 
+up_pr_ed5=probs_ed_3[, , 5] #full trust
+up_pr_ed5_m=apply(up_pr_ed5, 2,function(x) mean(x))
+up_pr_ed5_q=apply(up_pr_ed5, 2,quantile, c(0.025, 0.975)) 
+
+t_up=data.frame(cbind(cpi_sim,up_pr_ed1_m,up_pr_ed2_m,up_pr_ed3_m,up_pr_ed4_m,up_pr_ed5_m))
+colnames(t_up) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_up <- melt(t_up, id="cpi")
+
+t_up_cilow=data.frame(cbind(cpi_sim,up_pr_ed1_q[1,],up_pr_ed2_q[1,],up_pr_ed3_q[1,],up_pr_ed4_q[1,],up_pr_ed5_q[1,]))
+colnames(t_up_cilow) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_up_cilow <- melt(t_up_cilow, id="cpi")
+
+t_up_cihi=data.frame(cbind(cpi_sim,up_pr_ed1_q[2,],up_pr_ed2_q[2,],up_pr_ed3_q[2,],up_pr_ed4_q[2,],up_pr_ed5_q[2,]))
+colnames(t_up_cihi) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_up_cihi <- melt(t_up_cihi, id="cpi")
+
+all_up=cbind(t_up,t_up_cilow$value,t_up_cihi$value)
+colnames(all_up) <- c("cpi", "variable","value","low_ci","high_ci")
+
+ggplot(data=all_up,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_up,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Upper & Secondary Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+### 3.3.4.BA & Higher Education
+```{r}
+#BA and higher Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=0
+X_aca1[3]=1
+X_aca1[20]=1 #democratic countries
+X_ed_4=cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,1,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20]))
+
+probs_ed_4=simulation_education(X_ed_4,S,cpi_sim,Z)
+ba_pr_ed1=probs_ed_4[, , 1] #no trust
+ba_pr_ed1_m=apply(ba_pr_ed1, 2,function(x) mean(x))
+ba_pr_ed1_q=apply(ba_pr_ed1, 2,quantile, c(0.025, 0.975)) 
+ba_pr_ed2=probs_ed_4[, , 2] #low trust
+ba_pr_ed2_m=apply(ba_pr_ed2, 2,function(x) mean(x))
+ba_pr_ed2_q=apply(ba_pr_ed2, 2,quantile, c(0.025, 0.975)) 
+ba_pr_ed3=probs_ed_4[, , 3] #average trust
+ba_pr_ed3_m=apply(ba_pr_ed3, 2,function(x) mean(x))
+ba_pr_ed3_q=apply(ba_pr_ed3, 2,quantile, c(0.025, 0.975)) 
+ba_pr_ed4=probs_ed_4[, , 4] #high trust
+ba_pr_ed4_m=apply(ba_pr_ed4, 2,function(x) mean(x))
+ba_pr_ed4_q=apply(ba_pr_ed4, 2,quantile, c(0.025, 0.975)) 
+ba_pr_ed5=probs_ed_4[, , 5] #full trust
+ba_pr_ed5_m=apply(ba_pr_ed5, 2,function(x) mean(x))
+ba_pr_ed5_q=apply(ba_pr_ed5, 2,quantile, c(0.025, 0.975)) 
+
+
+t_ba=data.frame(cbind(cpi_sim,ba_pr_ed1_m,ba_pr_ed2_m,ba_pr_ed3_m,ba_pr_ed4_m,ba_pr_ed5_m))
+colnames(t_ba) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_ba <- melt(t_ba, id="cpi")
+
+t_ba_cilow=data.frame(cbind(cpi_sim,ba_pr_ed1_q[1,],ba_pr_ed2_q[1,],ba_pr_ed3_q[1,],ba_pr_ed4_q[1,],ba_pr_ed5_q[1,]))
+colnames(t_ba_cilow) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_ba_cilow <- melt(t_ba_cilow, id="cpi")
+
+t_ba_cihi=data.frame(cbind(cpi_sim,ba_pr_ed1_q[2,],ba_pr_ed2_q[2,],ba_pr_ed3_q[2,],ba_pr_ed4_q[2,],ba_pr_ed5_q[2,]))
+colnames(t_ba_cihi) <- c("cpi", "no_trust","low_trust","avg_trust","high_trust","full_trust")
+t_ba_cihi <- melt(t_ba_cihi, id="cpi")
+
+all_ba=cbind(t_ba,t_ba_cilow$value,t_ba_cihi$value)
+colnames(all_ba) <- c("cpi", "variable","value","low_ci","high_ci")
+
+g1_bahig_democ=ggplot(data=all_ba,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_ba,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "BA & Higher Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)+theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))
+
+ggplot(data=all_ba,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_ba,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for BA & Higher Education in Democratic Countries",x="CPI Scenarios",y="Predicted Probabilities")+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+
+```
+
+## 3.4.First Differences in DEMOCRACIES
+HYPO-2:
+Corruption and education interact to affect a person's level of trust in political institutions.
+
+H2 a) In countries with comparatively high levels of corruption, people with high education show lower levels of political trust than low educated people.
+
+We expect:
+probability of no trust in high education (ba_pr_ed1) > probability of no trust in low education (low_pr_ed1) in low levels of CPI
+
+```{r}
+#ba_pr_ed5_m #probabiliry of no trust, ba and higher
+#low_pr_ed5_m #probability of no trust, basic education
+#this is the full trust case,
+
+QoIFD <-ba_pr_ed1- low_pr_ed1  
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+jpeg("fd_h2a_democ.jpg")
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.30),type = "n",xlab = "CPI Scenarios", ylab = "First Difference of Predicted Probability",
+      main = "First Difference Analysis- H2a in Democratic Countries")
+abline(h = 0, lwd = 1, lty = "dashed",col="black")
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("red", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='#FF8080FF',lwd=1)
+dev.off()
+
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.30),type = "n",xlab = "CPI Scenarios", ylab = "First Difference of Predicted Probability",
+      main = "First Difference Analysis- H2a in Democratic Countries")
+abline(h = 0, lwd = 1, lty = "dashed",col="black")
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("red", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='#FF8080FF',lwd=1)
+
+```
+
+H2 b): : H2b: In countries with comparatively low levels of corruption, people with high education show higher levels of political trust than low educated people.
+
+We expect:
+probability of full trust in high education (ba_pr_ed5) > probability of full trust in low education (low_pr_ed1) in high levels of CPI
+
+```{r}
+#ba_pr_ed5_m #probabiliry of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+
+QoIFD <-ba_pr_ed5-low_pr_ed5
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+jpeg("fd_h2b_democ.jpg")
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.3),type = "n",main = "First Difference Analysis- H2b in Democratic Countries",ylab = "First Difference of Predicted Probability")
+abline(h = 0, lwd = 1, lty = "dashed",col='black')
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("skyblue", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='skyblue',lwd=1)
+dev.off()
+
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.3),type = "n",main = "First Difference Analysis- H2b in Democratic Countries",ylab = "First Difference of Predicted Probability")
+abline(h = 0, lwd = 1, lty = "dashed",col='black')
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("skyblue", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='skyblue',lwd=1)
+
+```
+
+## 3.5.Simulation with Average Case Approach with Scenarios in NON DEMOCRACIES
+- Simulating uncertainity using cpi, sceanarios, based on whole dataset
+
+```{r}
+k <- ncol(X)
+J <- ncol(Z)
+
+dim(X) #50199  x  23
+varcov <- vcov(model_3) 
+mu <- model_3$coefficients #23 coefficients
+zeta<-model_3$zeta #4 zetas
+mu<-c(mu,zeta) #27 total
+
+nsim <- 1000
+library(MASS)
+S <- mvrnorm(nsim, mu, varcov) #generate sampling distribution
+dim(S) #1000x30
+
+cpi_sim=seq(0,10,length=50)
+
+simulation_education=function(X_ed_1,S,cpi_sim,Z){
+U <- array(NA, c(nrow(X_ed_1),nrow(S)))
+i=1
+while(i<=length(cpi_sim)){ #this is going to happen 50 times
+  for(k in 1:nrow(S)){ #this is going to happen 1000 times
+    U[i,k] <- X_ed_1[i, ] %*% S[k,1:30] #these are our predicted results
+  }
+  i=i+1
+}
+
+probs <- array(NA, c(nsim, length(cpi_sim),ncol(Z)))
+for(i in 1:length(cpi_sim)){ #this is going to be done 50 times
+  for(j in 1:nrow(S)){ #this is going to be done 1000 times
+    #first 1 
+    probs[j, i, 1] <- exp( S[j,31]- U[i, j])/(1 + exp(S[j,31] - U[i, j]))
+    probs[j, i, 2] <- exp(S[j,32] - U[i, j])/(1 + exp(S[j,32] - U[i, j])) - exp(S[j,31]- U[i,j])/(1 + exp(S[j,31] - U[i, j]))
+    probs[j, i, 3] <- exp(S[j,33] - U[i, j])/(1 + exp(S[j,33] - U[i, j])) - exp(S[j,32]- U[i, j])/(1 + exp(S[j,32] - U[i,j]))
+    probs[j, i, 4] <- exp(S[j,34] - U[i,j])/(1 + exp(S[j,34] - U[i,j])) - exp(S[j,33]- U[i,j])/(1 + exp(S[j,33] - U[i,j]))
+    probs[j, i, 5] <- 1 - exp(S[j,34] - U[i, j])/(1 + exp(S[j,34] - U[i,j])) 
+  }
+}
+return(probs)
+}
+
+head(X)
+```
+
+### 3.5.1. Basic Education
+```{r}
+#Basic Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=0
+X_aca1[3]=0
+X_aca1[20]=0 #democratic countries
+X_ed_1=cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,X_aca1[20],X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20])
+
+#dummied$econ_satis,dummied$gdp_new,dummied$unemployment,dummied$`regionEurope & Central Asia`,dummied$`regionLatin America & Caribbean`,dummied$`regionMiddle East & North Africa`,dummied$`regionNorth America`,dummied$`regionSouth Asia`,dummied$`regionSub-Saharan Africa`,dummied$democ_dummy,dummied$edu1*dummied$cpi,dummied$edu2*dummied$cpi,dummied$edu3*dummied$cpi
+
+probs_ed_1_nd=simulation_education(X_ed_1,S,cpi_sim,Z)
+low_pr_ed1_nd=probs_ed_1_nd[, , 1] #no trust
+low_pr_ed1_m_nd=apply(low_pr_ed1_nd, 2,function(x) mean(x))
+low_pr_ed1_q_nd=apply(low_pr_ed1_nd, 2,quantile, c(0.025, 0.975)) 
+
+low_pr_ed2_nd=probs_ed_1_nd[, , 2] #low trust
+low_pr_ed2_m_nd=apply(low_pr_ed2_nd, 2,function(x) mean(x))
+low_pr_ed2_q_nd=apply(low_pr_ed2_nd, 2,quantile, c(0.025, 0.975)) 
+
+low_pr_ed3_nd=probs_ed_1_nd[, , 3] #average trust
+low_pr_ed3_m_nd=apply(low_pr_ed3_nd, 2,function(x) mean(x))
+low_pr_ed3_q_nd=apply(low_pr_ed3_nd, 2,quantile, c(0.025, 0.975)) 
+
+low_pr_ed4_nd=probs_ed_1_nd[, , 4] #high trust
+low_pr_ed4_m_nd=apply(low_pr_ed4_nd, 2,function(x) mean(x))
+low_pr_ed4_q_nd=apply(low_pr_ed4_nd, 2,quantile, c(0.025, 0.975)) 
+
+low_pr_ed5_nd=probs_ed_1_nd[, , 5] #full trust
+low_pr_ed5_m_nd=apply(low_pr_ed5_nd, 2,function(x) mean(x))
+low_pr_ed5_q_nd=apply(low_pr_ed5_nd, 2,quantile, c(0.025, 0.975)) 
+
+t_low=data.frame(cbind(cpi_sim,low_pr_ed1_m_nd,low_pr_ed2_m_nd,low_pr_ed3_m_nd,low_pr_ed4_m_nd,low_pr_ed5_m_nd))
+colnames(t_low) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_low <- melt(t_low, id="cpi")
+
+t_low_cilow=data.frame(cbind(cpi_sim,low_pr_ed1_q_nd[1,],low_pr_ed2_q_nd[1,],low_pr_ed3_q_nd[1,],low_pr_ed4_q_nd[1,],low_pr_ed5_q_nd[1,]))
+colnames(t_low_cilow) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_low_cilow <- melt(t_low_cilow, id="cpi")
+
+t_low_cihi=data.frame(cbind(cpi_sim,low_pr_ed1_q_nd[2,],low_pr_ed2_q_nd[2,],low_pr_ed3_q_nd[2,],low_pr_ed4_q_nd[2,],low_pr_ed5_q_nd[2,]))
+colnames(t_low_cihi) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_low_cihi <- melt(t_low_cihi, id="cpi")
+
+all_low=cbind(t_low,t_low_cilow$value,t_low_cihi$value)
+colnames(all_low) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+g1_basic_nondemoc=ggplot(data=all_low,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_low,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "Basic Education in NonDemocratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)+theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))
+
+ggplot(data=all_low,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_low,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Basic Education in Non Democratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+```
+
+
+### 3.5.2.Lower Secondary Education
+```{r}
+#Lower Secondary Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=1
+X_aca1[2]=0
+X_aca1[3]=0
+X_aca1[20]=0 #democratic countries
+X_ed_2=cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,0,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20]))
+
+probs_ed_2_nd=simulation_education(X_ed_2,S,cpi_sim,Z)
+lows_pr_ed1_nd=probs_ed_2_nd[, , 1] #no trust
+lows_pr_ed1_m_nd=apply(lows_pr_ed1_nd, 2,function(x) mean(x))
+lows_pr_ed1_q_nd=apply(lows_pr_ed1_nd, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed2_nd=probs_ed_2_nd[, , 2] #low trust
+lows_pr_ed2_m_nd=apply(lows_pr_ed2_nd, 2,function(x) mean(x))
+lows_pr_ed2_q_nd=apply(lows_pr_ed2_nd, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed3_nd=probs_ed_2_nd[, , 3] #average trust
+lows_pr_ed3_m_nd=apply(lows_pr_ed3_nd, 2,function(x) mean(x))
+lows_pr_ed3_q_nd=apply(lows_pr_ed3_nd, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed4_nd=probs_ed_2_nd[, , 4] #high trust
+lows_pr_ed4_m_nd=apply(lows_pr_ed4_nd, 2,function(x) mean(x))
+lows_pr_ed4_q_nd=apply(lows_pr_ed4_nd, 2,quantile, c(0.025, 0.975)) 
+
+lows_pr_ed5_nd=probs_ed_2_nd[, , 5] #full trust
+lows_pr_ed5_m_nd=apply(lows_pr_ed5_nd, 2,function(x) mean(x))
+lows_pr_ed5_q_nd=apply(lows_pr_ed5_nd, 2,quantile, c(0.025, 0.975))
+
+t_lows=data.frame(cbind(cpi_sim,lows_pr_ed1_m_nd,lows_pr_ed2_m_nd,lows_pr_ed3_m_nd,lows_pr_ed4_m_nd,lows_pr_ed5_m_nd))
+colnames(t_lows) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_lows <- melt(t_lows, id="cpi")
+
+t_lows_cilow=data.frame(cbind(cpi_sim,lows_pr_ed1_q_nd[1,],lows_pr_ed2_q_nd[1,],lows_pr_ed3_q_nd[1,],lows_pr_ed4_q_nd[1,],lows_pr_ed5_q_nd[1,]))
+colnames(t_lows_cilow) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_lows_cilow <- melt(t_lows_cilow, id="cpi")
+
+t_lows_cihi=data.frame(cbind(cpi_sim,lows_pr_ed1_q_nd[2,],lows_pr_ed2_q_nd[2,],lows_pr_ed3_q_nd[2,],lows_pr_ed4_q_nd[2,],lows_pr_ed5_q_nd[2,]))
+colnames(t_lows_cihi) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_lows_cihi <- melt(t_lows_cihi, id="cpi")
+
+all_lows=cbind(t_lows,t_lows_cilow$value,t_lows_cihi$value)
+colnames(all_lows) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+ggplot(data=all_lows,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_lows,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Lower Secondary Education in Non Democratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+### 3.5.3.Upper & Secondary Education
+```{r}
+#Upper and Post Secondary Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=1
+X_aca1[3]=0
+X_aca1[20]=0 #democratic countries
+X_ed_3=cbind(cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,0,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20])))
+
+probs_ed_3_nd=simulation_education(X_ed_3,S,cpi_sim,Z)
+up_pr_ed1_nd=probs_ed_3_nd[, , 1] #no trust
+up_pr_ed1_m_nd=apply(up_pr_ed1_nd, 2,function(x) mean(x))
+up_pr_ed1_q_nd=apply(up_pr_ed1_nd, 2,quantile, c(0.025, 0.975)) 
+
+up_pr_ed2_nd=probs_ed_3_nd[, , 2] #low trust
+up_pr_ed2_m_nd=apply(up_pr_ed2_nd, 2,function(x) mean(x))
+up_pr_ed2_q_nd=apply(up_pr_ed2_nd, 2,quantile, c(0.025, 0.975)) 
+
+up_pr_ed3_nd=probs_ed_3_nd[, , 3] #average trust
+up_pr_ed3_m_nd=apply(up_pr_ed3_nd, 2,function(x) mean(x))
+up_pr_ed3_q_nd=apply(up_pr_ed3_nd, 2,quantile, c(0.025, 0.975)) 
+
+up_pr_ed4_nd=probs_ed_3_nd[, , 4] #high trust
+up_pr_ed4_m_nd=apply(up_pr_ed4_nd, 2,function(x) mean(x))
+up_pr_ed4_q_nd=apply(up_pr_ed4_nd, 2,quantile, c(0.025, 0.975)) 
+
+up_pr_ed5_nd=probs_ed_3_nd[, , 5] #full trust
+up_pr_ed5_m_nd=apply(up_pr_ed5_nd, 2,function(x) mean(x))
+up_pr_ed5_q_nd=apply(up_pr_ed5_nd, 2,quantile, c(0.025, 0.975)) 
+
+t_up=data.frame(cbind(cpi_sim,up_pr_ed1_m_nd,up_pr_ed2_m_nd,up_pr_ed3_m_nd,up_pr_ed4_m_nd,up_pr_ed5_m_nd))
+colnames(t_up) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_up <- melt(t_up, id="cpi")
+
+t_up_cilow=data.frame(cbind(cpi_sim,up_pr_ed1_q_nd[1,],up_pr_ed2_q_nd[1,],up_pr_ed3_q_nd[1,],up_pr_ed4_q_nd[1,],up_pr_ed5_q_nd[1,]))
+colnames(t_up_cilow) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_up_cilow <- melt(t_up_cilow, id="cpi")
+
+t_up_cihi=data.frame(cbind(cpi_sim,up_pr_ed1_q_nd[2,],up_pr_ed2_q_nd[2,],up_pr_ed3_q_nd[2,],up_pr_ed4_q_nd[2,],up_pr_ed5_q_nd[2,]))
+colnames(t_up_cihi) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_up_cihi <- melt(t_up_cihi, id="cpi")
+
+all_up=cbind(t_up,t_up_cilow$value,t_up_cihi$value)
+colnames(all_up) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+ggplot(data=all_up,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_up,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for Upper & Secondary Education in Non Democratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+### 3.5.4.BA & Higher Education
+```{r}
+#BA and higher Education:
+X_aca1 <- apply(X,2,mean)
+X_aca1[1]=0
+X_aca1[2]=0
+X_aca1[3]=1
+X_aca1[20]=0 #democratic countries
+X_ed_4=cbind(cbind(X_aca1[1],X_aca1[2],X_aca1[3],cpi_sim,1,X_aca1[6],1,1,X_aca1[9],0,X_aca1[11],X_aca1[12],X_aca1[13],1,0,0,0,0,0,0,X_aca1[1]*cpi_sim,
+             X_aca1[2]*cpi_sim,
+             X_aca1[3]*cpi_sim,
+             X_aca1[1]*X_aca1[20],
+             X_aca1[2]*X_aca1[20],
+             X_aca1[3]*X_aca1[20],cpi_sim*X_aca1[20],X_aca1[1]*cpi_sim*X_aca1[20],X_aca1[2]*cpi_sim*X_aca1[20],X_aca1[3]*cpi_sim*X_aca1[20]))
+
+probs_ed_4_nd=simulation_education(X_ed_4,S,cpi_sim,Z)
+ba_pr_ed1_nd=probs_ed_4_nd[, , 1] #no trust
+ba_pr_ed1_m_nd=apply(ba_pr_ed1_nd, 2,function(x) mean(x))
+ba_pr_ed1_q_nd=apply(ba_pr_ed1_nd, 2,quantile, c(0.025, 0.975)) 
+
+ba_pr_ed2_nd=probs_ed_4_nd[, , 2] #low trust
+ba_pr_ed2_m_nd=apply(ba_pr_ed2_nd, 2,function(x) mean(x))
+ba_pr_ed2_q_nd=apply(ba_pr_ed2_nd, 2,quantile, c(0.025, 0.975)) 
+
+ba_pr_ed3_nd=probs_ed_4_nd[, , 3] #average trust
+ba_pr_ed3_m_nd=apply(ba_pr_ed3_nd, 2,function(x) mean(x))
+ba_pr_ed3_q_nd=apply(ba_pr_ed3_nd, 2,quantile, c(0.025, 0.975)) 
+
+ba_pr_ed4_nd=probs_ed_4_nd[, , 4] #high trust
+ba_pr_ed4_m_nd=apply(ba_pr_ed4_nd, 2,function(x) mean(x))
+ba_pr_ed4_q_nd=apply(ba_pr_ed4_nd, 2,quantile, c(0.025, 0.975)) 
+
+ba_pr_ed5_nd=probs_ed_4_nd[, , 5] #full trust
+ba_pr_ed5_m_nd=apply(ba_pr_ed5_nd, 2,function(x) mean(x))
+ba_pr_ed5_q_nd=apply(ba_pr_ed5_nd, 2,quantile, c(0.025, 0.975)) 
+
+
+t_ba=data.frame(cbind(cpi_sim,ba_pr_ed1_m_nd,ba_pr_ed2_m_nd,ba_pr_ed3_m_nd,ba_pr_ed4_m_nd,ba_pr_ed5_m_nd))
+colnames(t_ba) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_ba <- melt(t_ba, id="cpi")
+
+t_ba_cilow=data.frame(cbind(cpi_sim,ba_pr_ed1_q_nd[1,],ba_pr_ed2_q_nd[1,],ba_pr_ed3_q_nd[1,],ba_pr_ed4_q_nd[1,],ba_pr_ed5_q_nd[1,]))
+colnames(t_ba_cilow) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_ba_cilow <- melt(t_ba_cilow, id="cpi")
+
+t_ba_cihi=data.frame(cbind(cpi_sim,ba_pr_ed1_q_nd[2,],ba_pr_ed2_q_nd[2,],ba_pr_ed3_q_nd[2,],ba_pr_ed4_q_nd[2,],ba_pr_ed5_q_nd[2,]))
+colnames(t_ba_cihi) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_ba_cihi <- melt(t_ba_cihi, id="cpi")
+
+all_ba=cbind(t_ba,t_ba_cilow$value,t_ba_cihi$value)
+colnames(all_ba) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+g1_bahig_nondemoc=ggplot(data=all_ba,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_ba,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "BA & Higher Education in NonDemocratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)+theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))
+
+
+ggplot(data=all_ba,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_ba,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "CPI Effect for BA & Higher Education in Non Democratic Countries",x='CPI Scenarios',y='Predicted Probabilities')+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+ylim(0,0.7)
+
+```
+
+
+## 3.6.First Differences in NON DEMOCRACIES
+HYPO-2:
+Corruption and education interact to affect a person's level of trust in political institutions.
+
+H2 a) In countries with comparatively high levels of corruption, people with high education show lower levels of political trust than low educated people.
+
+We expect:
+probability of no trust in high education (ba_pr_ed1) > probability of no trust in low education (low_pr_ed1) in low levels of CPI
+
+```{r}
+#ba_pr_ed5_m #probabiliry of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, basic education
+#this is the full trust case,
+
+QoIFD <-ba_pr_ed1_nd- low_pr_ed1_nd  
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+jpeg("fd_h2a_nondemoc.jpg")
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.30),type = "n",xlab = "CPI Scenarios", ylab = "First Difference of Predicted Probability",
+      main = "First Difference Analysis- H2a in Non Democratic Countries")
+abline(h = 0, lwd = 1, lty = "dashed",col="black")
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("red", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='#FF8080FF',lwd=1)
+dev.off()
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.30),type = "n",xlab = "CPI Scenarios", ylab = "First Difference of Predicted Probability",
+      main = "First Difference Analysis- H2a in Non Democratic Countries")
+abline(h = 0, lwd = 1, lty = "dashed",col="black")
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("red", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='#FF8080FF',lwd=1)
+
+```
+
+H2 b): : H2b: In countries with comparatively low levels of corruption, people with high education show higher levels of political trust than low educated people.
+
+We expect:
+probability of full trust in high education (ba_pr_ed5) > probability of full trust in low education (low_pr_ed1) in high levels of CPI
+```{r}
+#ba_pr_ed5_m #probabiliry of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+
+QoIFD <-ba_pr_ed5_nd-low_pr_ed5_nd
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+jpeg("fd_h2b_nondemoc.jpg")
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.3),type = "n",main = "First Difference Analysis- H2b in Non Democratic Countries",ylab = "First Difference of Predicted Probability",xlab = "CPI Scenarios")
+abline(h = 0, lwd = 1, lty = "dashed",col='black')
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("skyblue", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='skyblue',lwd=1)
+dev.off()
+
+plot(x=cpi_sim,y = QoIFDMean,ylim=c(-0.30,0.3),type = "n",main = "First Difference Analysis- H2b in Non Democratic Countries",ylab = "First Difference of Predicted Probability",xlab = "CPI Scenarios")
+abline(h = 0, lwd = 1, lty = "dashed",col='black')
+polygon(c(cpi_sim,rev(cpi_sim)),c(QoIFDCI [1,],rev(QoIFDCI [2,])),col=adjustcolor("skyblue", alpha=(3-.5)/10), border=NA)
+points(x=cpi_sim,y = QoIFDMean,type = "l",col='skyblue',lwd=1)
+```
+
+## 3.7.First Differences in NON DEMOCRACIES & DEMOCRACIES
+
+### 3.7.1. Basic Education
+```{r}
+#ba_pr_ed5_m #probability of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+#this is the full trust case,
+
+#no trust
+QoIFD <-low_pr_ed1-low_pr_ed1_nd
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#low trust
+QoIFD_lt <-low_pr_ed2-low_pr_ed2_nd
+QoIFDMean_lt <- apply(QoIFD_lt,2, mean)
+QoIFDCI_lt <- apply(QoIFD_lt, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#average trust
+QoIFD_at <-low_pr_ed3-low_pr_ed3_nd
+QoIFDMean_at <- apply(QoIFD_at,2, mean)
+QoIFDCI_at <- apply(QoIFD_at, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#high trust
+QoIFD_ht <-low_pr_ed4-low_pr_ed4_nd
+QoIFDMean_ht <- apply(QoIFD_ht,2, mean)
+QoIFDCI_ht <- apply(QoIFD_ht, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#full trust
+QoIFD_ft <-low_pr_ed5-low_pr_ed5_nd
+QoIFDMean_ft <- apply(QoIFD_ft,2, mean)
+QoIFDCI_ft <- apply(QoIFD_ft, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+
+t_gen_dm=data.frame(cbind(cpi_sim,QoIFDMean,QoIFDMean_lt,QoIFDMean_at,QoIFDMean_ht,QoIFDMean_ft))
+colnames(t_gen_dm) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm <- melt(t_gen_dm, id="cpi")
+
+t_gen_dm_q1=data.frame(cbind(cpi_sim,QoIFDCI[1,],QoIFDCI_lt[1,],QoIFDCI_at[1,],QoIFDCI_ht[1,],QoIFDCI_ft[1,]))
+colnames(t_gen_dm_q1) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q1 <- melt(t_gen_dm_q1, id="cpi")
+
+t_gen_dm_q2=data.frame(cbind(cpi_sim,QoIFDCI[2,],QoIFDCI_lt[2,],QoIFDCI_at[2,],QoIFDCI_ht[2,],QoIFDCI_ft[2,]))
+colnames(t_gen_dm_q2) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q2 <- melt(t_gen_dm_q2, id="cpi")
+
+all_gen_nd=cbind(t_gen_dm,t_gen_dm_q1$value,t_gen_dm_q2$value)
+colnames(all_gen_nd) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+
+fd_basic=ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences in Basic Education",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")+theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))+ylim(-0.5,0.25)
+
+fd_basic
+
+ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences of Non Democratic and Democratic in Basic Edu",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")
+
+```
+
+### 3.7.2.Lower Secondary Education
+```{r}
+#ba_pr_ed5_m #probability of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+#this is the full trust case,
+
+#no trust
+QoIFD <-lows_pr_ed1-lows_pr_ed1_nd
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#lows trust
+QoIFD_lt <-lows_pr_ed2-lows_pr_ed2_nd
+QoIFDMean_lt <- apply(QoIFD_lt,2, mean)
+QoIFDCI_lt <- apply(QoIFD_lt, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#average trust
+QoIFD_at <-lows_pr_ed3-lows_pr_ed3_nd
+QoIFDMean_at <- apply(QoIFD_at,2, mean)
+QoIFDCI_at <- apply(QoIFD_at, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#high trust
+QoIFD_ht <-lows_pr_ed4-lows_pr_ed4_nd
+QoIFDMean_ht <- apply(QoIFD_ht,2, mean)
+QoIFDCI_ht <- apply(QoIFD_ht, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#full trust
+QoIFD_ft <-lows_pr_ed5-lows_pr_ed5_nd
+QoIFDMean_ft <- apply(QoIFD_ft,2, mean)
+QoIFDCI_ft <- apply(QoIFD_ft, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+
+t_gen_dm=data.frame(cbind(cpi_sim,QoIFDMean,QoIFDMean_lt,QoIFDMean_at,QoIFDMean_ht,QoIFDMean_ft))
+colnames(t_gen_dm) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm <- melt(t_gen_dm, id="cpi")
+
+t_gen_dm_q1=data.frame(cbind(cpi_sim,QoIFDCI[1,],QoIFDCI_lt[1,],QoIFDCI_at[1,],QoIFDCI_ht[1,],QoIFDCI_ft[1,]))
+colnames(t_gen_dm_q1) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q1 <- melt(t_gen_dm_q1, id="cpi")
+
+t_gen_dm_q2=data.frame(cbind(cpi_sim,QoIFDCI[2,],QoIFDCI_lt[2,],QoIFDCI_at[2,],QoIFDCI_ht[2,],QoIFDCI_ft[2,]))
+colnames(t_gen_dm_q2) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q2 <- melt(t_gen_dm_q2, id="cpi")
+
+all_gen_nd=cbind(t_gen_dm,t_gen_dm_q1$value,t_gen_dm_q2$value)
+colnames(all_gen_nd) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+
+ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences of Non Democratic and Democratic in Lower Secondary Edu",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")
+
+
+```
+
+### 3.7.3.Upper & Secondary Education
+```{r}
+#ba_pr_ed5_m #probability of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+#this is the full trust case,
+
+#no trust
+QoIFD <-up_pr_ed1-up_pr_ed1_nd
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#up trust
+QoIFD_lt <-up_pr_ed2-up_pr_ed2_nd
+QoIFDMean_lt <- apply(QoIFD_lt,2, mean)
+QoIFDCI_lt <- apply(QoIFD_lt, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#average trust
+QoIFD_at <-up_pr_ed3-up_pr_ed3_nd
+QoIFDMean_at <- apply(QoIFD_at,2, mean)
+QoIFDCI_at <- apply(QoIFD_at, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#high trust
+QoIFD_ht <-up_pr_ed4-up_pr_ed4_nd
+QoIFDMean_ht <- apply(QoIFD_ht,2, mean)
+QoIFDCI_ht <- apply(QoIFD_ht, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#full trust
+QoIFD_ft <-up_pr_ed5-up_pr_ed5_nd
+QoIFDMean_ft <- apply(QoIFD_ft,2, mean)
+QoIFDCI_ft <- apply(QoIFD_ft, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+
+t_gen_dm=data.frame(cbind(cpi_sim,QoIFDMean,QoIFDMean_lt,QoIFDMean_at,QoIFDMean_ht,QoIFDMean_ft))
+colnames(t_gen_dm) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm <- melt(t_gen_dm, id="cpi")
+
+t_gen_dm_q1=data.frame(cbind(cpi_sim,QoIFDCI[1,],QoIFDCI_lt[1,],QoIFDCI_at[1,],QoIFDCI_ht[1,],QoIFDCI_ft[1,]))
+colnames(t_gen_dm_q1) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q1 <- melt(t_gen_dm_q1, id="cpi")
+
+t_gen_dm_q2=data.frame(cbind(cpi_sim,QoIFDCI[2,],QoIFDCI_lt[2,],QoIFDCI_at[2,],QoIFDCI_ht[2,],QoIFDCI_ft[2,]))
+colnames(t_gen_dm_q2) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q2 <- melt(t_gen_dm_q2, id="cpi")
+
+all_gen_nd=cbind(t_gen_dm,t_gen_dm_q1$value,t_gen_dm_q2$value)
+colnames(all_gen_nd) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+
+ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences of Non Democratic and Democratic in Up&Post Secondary Edu",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")
+
+
+```
+
+### 3.7.4.BA & Higher Education
+```{r}
+#ba_pr_ed5_m #probability of full trust, ba and higher
+#low_pr_ed5_m #probability of full trust, low education
+#this is the full trust case,
+
+#no trust
+QoIFD <-ba_pr_ed1-ba_pr_ed1_nd
+QoIFDMean <- apply(QoIFD,2, mean)
+QoIFDCI <- apply(QoIFD, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#ba trust
+QoIFD_lt <-ba_pr_ed2-ba_pr_ed2_nd
+QoIFDMean_lt <- apply(QoIFD_lt,2, mean)
+QoIFDCI_lt <- apply(QoIFD_lt, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#average trust
+QoIFD_at <-ba_pr_ed3-ba_pr_ed3_nd
+QoIFDMean_at <- apply(QoIFD_at,2, mean)
+QoIFDCI_at <- apply(QoIFD_at, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#high trust
+QoIFD_ht <-ba_pr_ed4-ba_pr_ed4_nd
+QoIFDMean_ht <- apply(QoIFD_ht,2, mean)
+QoIFDCI_ht <- apply(QoIFD_ht, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+#full trust
+QoIFD_ft <-ba_pr_ed5-ba_pr_ed5_nd
+QoIFDMean_ft <- apply(QoIFD_ft,2, mean)
+QoIFDCI_ft <- apply(QoIFD_ft, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+
+t_gen_dm=data.frame(cbind(cpi_sim,QoIFDMean,QoIFDMean_lt,QoIFDMean_at,QoIFDMean_ht,QoIFDMean_ft))
+colnames(t_gen_dm) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm <- melt(t_gen_dm, id="cpi")
+
+t_gen_dm_q1=data.frame(cbind(cpi_sim,QoIFDCI[1,],QoIFDCI_lt[1,],QoIFDCI_at[1,],QoIFDCI_ht[1,],QoIFDCI_ft[1,]))
+colnames(t_gen_dm_q1) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q1 <- melt(t_gen_dm_q1, id="cpi")
+
+t_gen_dm_q2=data.frame(cbind(cpi_sim,QoIFDCI[2,],QoIFDCI_lt[2,],QoIFDCI_at[2,],QoIFDCI_ht[2,],QoIFDCI_ft[2,]))
+colnames(t_gen_dm_q2) <- c("cpi", 'no_trust','low_trust','avg_trust','high_trust','full_trust')
+t_gen_dm_q2 <- melt(t_gen_dm_q2, id="cpi")
+
+all_gen_nd=cbind(t_gen_dm,t_gen_dm_q1$value,t_gen_dm_q2$value)
+colnames(all_gen_nd) <- c("cpi", 'variable','value','low_ci','high_ci')
+
+
+fd_high=ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences in Ba&Higher Education",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")+theme(plot.title = element_text(size=10),axis.title.x=element_text(size=8),axis.title.y=element_text(size=8))+ylim(-0.5,0.25)
+
+fd_high
+
+ggplot(data=all_gen_nd,aes(x=cpi,y=value,colour=variable))+geom_line()+geom_ribbon(data=all_gen_nd,aes(ymin=low_ci, ymax=high_ci,colour=variable,fill = variable),alpha=0.2,show.legend=FALSE,linetype=0)+ scale_color_manual(values=partycolors)+
+scale_fill_manual(values=partycolors, name="fill")+labs(title = "First Differences of Non Democratic and Democratic in Ba&Higher Edu",x='CPI Scenarios',y='First Difference of Predicted Probability')+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "grey"))+geom_hline(yintercept=0,color='grey',linetype="dashed")
+
+```
+
+# 4.Creating Graphs for the paper
+## 4.1.Education Effect on CPI in Democratic and NonDemocratic Countries
+```{r}
+#library(gridExtra)
+#install.packages("ggpubr")
+library(ggpubr)
+ggarrange(g1_basic_democ, g1_basic_nondemoc,g1_bahig_democ,g1_bahig_nondemoc,ncol=2,nrow=2,common.legend = TRUE, legend="bottom")
+
+ggsave("Education_effect.png",plot = last_plot())
+ #nrow=2, common.legend = TRUE, legend="bottom"
+```
+## 4.2.First Differences Between Democratic and NonDemocratic Countries
+```{r}
+#library(gridExtra)
+#install.packages("ggpubr")
+library(ggpubr)
+ggarrange(fd_basic,fd_high,ncol=2,common.legend = TRUE, legend="bottom")
+ggsave("First_Difference_democnodemoc.png",plot = last_plot())
+ #nrow=2, common.legend = TRUE, legend="bottom"
+```
+# 5. Robustness Check
+## 5.1. Eliminate countries which do not have fair elections
+A country having fair elections or not decided using the following the index: https://govdata360.worldbank.org/indicators/h7a147898?country=DEU&indicator=28751&viz=line_chart&years=2006,2016
+The threshold for the fairness decided to be 6.
+```{r}
+# Create a subset only containing those countries which have fair elections
+X_2=subset(final_wv6_recoded, !(country_name %in% c('Algeria','Armenia','Bahrain','Belarus','China','Egypt, Arab Rep.','Hong Kong SAR, China','Jordan','Kazakhstan','Kuwait','Libya','Malaysia','Morocco','Pakistan','Qatar','Russian Federation','Rwanda','Thailand','Uzbekistan','Yemen, Rep.','Zimbabwe')))
+
+# Reestimate the model with the subsampled data
+model_4 <- polr(political_trust_ordered ~ relevel(edu,ref='0')+cpi+relevel(edu,ref='0')*cpi+ male+age+rel_dummy+church_dummy+income+trust_dummy +econ_satis+gdp_new+unemployment+region+democ_dummy+relevel(edu,ref='0')*democ_dummy+democ_dummy*cpi+ relevel(edu,ref='0')*democ_dummy*cpi,data = X_2, Hess=TRUE)
+
+summary(model_4)
+```
+## 5.2.Random Sampling for Robustness Check
+Take a random 2/3 subsample of the data. Repeat 10 times and combine the results
+```{r}
+# Define the numbers of repetitions
+m <- 10
+
+# create an empty matrix to store the later results of the 10  2/3 subsample models
+beta_res <- matrix(NA, nrow = m, ncol = nrow(summary(model_3)$coefficients))
+se_res <- matrix(NA, nrow = m, ncol = nrow(summary(model_3)$coefficients))
+
+# draw a sample 10 times and apply the model, save the results and take the mean in the end
+for(i in 1:m){
+  
+  # Draw 2/3 subset 
+  subsam <- final_wv6_recoded[sample(nrow(final_wv6_recoded), floor(2/3 * nrow(final_wv6_recoded))),]
+  
+  # Apply the model on the 2/3 subsample  
+  model_r <- polr(political_trust_ordered ~ relevel(edu,ref='0')+cpi+relevel(edu,ref='0')*cpi+ male+age+rel_dummy+church_dummy+income+trust_dummy +econ_satis+gdp_new+unemployment+region+democ_dummy+relevel(edu,ref='0')*democ_dummy+democ_dummy*cpi+ relevel(edu,ref='0')*democ_dummy*cpi,data = subsam, Hess=TRUE)
+  
+  # save betas and SE in the matrices
+  beta_res[i,] <-  summary(model_r)$coefficients[,1]
+  se_res[i, ] <- summary(model_r)$coefficients[,2]
+}
+
+# Combining the results, taking the mean of the 10 subsample models
+q <- apply(beta_res, 2, mean, na.rm = T)
+q_se <-  apply(se_res, 2, mean, na.rm = T)
+
+# Creating an output table
+results <- cbind(q, q_se)
+colnames(results) <- c("Coef Comb.", "SE Comb.")
+kable(results, digits = 3)
+```
+
+# 6.Taking Latex outputs
+## 6.1.Main Models
+```{r}
+stargazer(model_1, model_2, model_3, title="Results of the ordered logistic regressions", keep.stat="all",
+align=TRUE,  dep.var.labels=c("Political trust"), colnames = T, column.labels=c("Model","Model", "Final Model"), no.space=TRUE, single.row=T, column.sep.width = "-45pt", float.env = "sidewaystable", ord.intercepts = TRUE, style = "ajps", covariate.labels = c("Education Level 1 (ref=0)",
+"Education Level 2 (ref=0)",
+"Education Level 3 (ref=0)",
+"CPI",
+"Gender (ref=female)",
+"Age",
+"Religiosity(ref=not religious)",
+"Church attendance(ref=not  often)",
+"Income",
+"Social trust (ref=not trusting)" ,
+"Economic satisfaction",
+"GDP",
+"Unemployment rate",
+"Europe and Central Asia (ref=East Asia and Pacific )",
+"Latin America and the Caribbean (ref=East Asia and Pacific )",
+"Middle East and North Africa (ref=East Asia and Pacific )",
+"North America (ref=East Asia and Pacific )",
+"South Asia (ref=East Asia and Pacific )",
+"Sub Saharan Africa (ref=East Asia and Pacific)",
+"Democracy",
+"Education Level 1 (ref=0)*CPI",
+"Education Level 2 (ref=0)*CPI",
+"Education Level 3 (ref=0)*CPI",
+"CPI*Democracy",
+"Education Level 1 (ref=0)*Democracy",
+"Education Level 2 (ref=0)*Democracy",
+"Education Level 3 (ref=0)*Democracy",
+"Education Level 1 (ref=0)*CPI*Democracy",
+"Education Level 2 (ref=0)*CPI*Democracy",
+"Education Level 3 (ref=0)*CPI*Democracy",
+"Intercept 0|1",
+"Intercept 1|2",
+"Intercept 2|3",
+"Intercept 3|4"))
+```
+
+## 6.2.Robustnesschecks Tables
+```{r}
+
+#install.packages("kableExtra")
+#library(knitr)
+#library(kableExtra)
+
+# Combine the betas and standarderrors of the robustnesschecks with the results of the final model 3 for comparability 
+robust_table <- cbind(round(summary(model_3)$coefficients[,1], digits = 3), round(summary(model_3)$coefficients[,2], digits = 3), round(q, digits = 3), round(q_se, digits = 3), round(summary(model_4)$coefficients[,1], digits = 3), round(summary(model_4)$coefficients[,2], digits = 3))
+
+colnames(robust_table) <- c("Coef","SE", "Coef", "SE", "Coef", "SE")
+rownames(robust_table) <-  c("Education Level 1 (ref=0)",
+"Education Level 2 (ref=0)",
+"Education Level 3 (ref=0)",
+"CPI",
+"Gender (ref=female)",
+"Age",
+"Religiosity(ref=not religious)",
+"Church attendance(ref=not  often)",
+"Income",
+"Social trust (ref=not trusting)" ,
+"Economic satisfaction",
+"GDP",
+"Unemployment rate",
+"Europe and Central Asia (ref=East Asia and Pacific )",
+"Latin America and the Caribbean (ref=East Asia and Pacific )",
+"Middle East and North Africa (ref=East Asia and Pacific )",
+"North America (ref=East Asia and Pacific )",
+"South Asia (ref=East Asia and Pacific )",
+"Sub Saharan Africa (ref=East Asia and Pacific)",
+"Democracy",
+"Education Level 1 (ref=0)*CPI",
+"Education Level 2 (ref=0)*CPI",
+"Education Level 3 (ref=0)*CPI",
+"CPI*Democracy",
+"Education Level 1 (ref=0)*Democracy",
+"Education Level 2 (ref=0)*Democracy",
+"Education Level 3 (ref=0)*Democracy",
+"Education Level 1 (ref=0)*CPI*Democracy",
+"Education Level 2 (ref=0)*CPI*Democracy",
+"Education Level 3 (ref=0)*CPI*Democracy",
+"Intercept 0|1",
+"Intercept 1|2",
+"Intercept 2|3",
+"Intercept 3|4")
+kable(robust_table, "latex", booktabs = T,  caption = "Results Robustnesscheck") %>%
+add_header_above(c(" " = 1, "Model 3" = 2, "Subs.Model" = 2, "Fair Elec. Model" = 2))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
