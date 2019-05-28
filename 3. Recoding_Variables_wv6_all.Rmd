@@ -1,0 +1,299 @@
+---
+title: "| AQM Paper-Recoding Variables"
+author: "Roman, Bengi, Annika"
+date: "5 June 2018"
+output:
+  html_notebook:
+    toc: yes
+  html_document: default
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+# Settings
+
+```{r results='hide', message=FALSE, warning=FALSE}
+
+# Loading the needed packages
+p_needed <- c("knitr", "MASS", "ggplot2", "ggthemes", "reshape2", "scales", "pROC", "countrycode", "pandas", "striprtf", "sqldf", "gdata", "foreign", "readxl", "data.table", "haven", "texreg", "sjPlot", "sjmisc", "sjstats", "lme4")
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+
+#somehow the installation of some packages did not work in the function above, therefore here again
+install.packages("texreg")
+library(texreg)
+
+```
+
+# Loading the preprocessed dataset
+
+The preprocessed dataset contains all relevant variables, however, they do not have the correct variable type and scales. Therefore, in the following code, we recode the variable. Thereby, for comparability, we try to scale them as similar possible to the variables used by Hakhverdian und Mayne (2012).
+
+```{r results='hide'}
+# Load wv6
+load("2_DataMissingness_wv6_all.Rdata")
+wv <- final_wv6_4
+rm(final_wv6_4)
+head(wv)
+View(wv)
+names(wv)
+```
+
+# Recoding
+In the following, we look at each variable again and recode or chance the variable type if necessary.
+
+## 1.country_name
+(Name of the country)
+```{r}
+table(wv$country_name)
+typeof(wv$country_name)
+wv$country_name <- as.factor(wv$country_name)
+```
+## 2.ID
+(Unique Identification number for each participant)
+```{r}
+typeof(wv$id)
+```
+## 3.Survey Year
+(Year the survey was conducted)
+```{r}
+table(wv$survey_year)
+wv$survey_year <- as.factor(wv$survey_year)
+typeof(wv$survey_year)
+```
+## 4.political_trust
+(Political trust/institutional trust of the participants)
+Note: So far, we treat political trust as metric variable
+```{r}
+table(wv$political_trust)
+typeof(wv$political_trust)
+
+```
+
+## 5.Education
+Education so far, is an ordered variable from 1-9, we recode it using the scale from Hakhverdian und Mayne (2012).
+
+```{r}
+table(wv$education)
+typeof(wv$education)
+
+# The new variable with 4 education stages is called "edu"
+wv$edu <- wv$education
+
+# Hakhverdian und Mayne (2012): 0 = incomplete primary education, primary education or first stage of basic
+# WVS:  1 'No formal education; 2 'Incomplete primary school, 3 'Complete primary school'
+wv$edu[wv$education <=3] <- 0
+
+# Hakhverdian und Mayne (2012):  2 = lower secondary or second stage of basic
+# WVS: 4 'Incomplete secondary school: technical/ vocational type'; 6 'Incomplete secondary school: university-preparatory type'
+wv$edu[wv$education ==4 | wv$education ==6 ] <- 1
+
+# Hakhverdian und Mayne (2012):  3 = upper secondary, post secondary, non-tertiary
+# WVS:  5 'Complete secondary school: technical/ vocational type';  7 'Complete secondary school: university-preparatory type'
+wv$edu[wv$education ==5 | wv$education ==7  ] <- 2
+
+# Hakhverdian und Mayne (2012):  4 = first stage of tertiary, second stage of tertiary
+# WVS:  8 'Some university-level education, without degree'; 'University - level education, with degree'
+wv$edu[wv$education ==8 | wv$education ==9  ] <- 3
+
+table(wv$education, wv$edu)
+```
+
+## 6.CPI
+(Corruption Perception Index)
+
+```{r}
+typeof(wv$cpi)
+
+# cpi is of type "character", therefore we transform it into a numerical variable, furthermore, some decimals are seperated with commas, so we replace them with dots
+wv$cpi <- as.numeric(gsub(",",".", gsub("\\.", ".", wv$cpi)))
+
+# checking the results
+table(wv$cpi)
+typeof(wv$cpi)
+```
+
+
+## 7.Gender
+```{r}
+# so far gender is coded 1 and 2, we recode it to 0 and 1 and call the variable "male"
+wv$male[wv$gender==1] <- 1
+wv$male[wv$gender==2] <- 0
+
+# checking the results
+table(wv$male, wv$gender)
+typeof(wv$gender)
+```
+
+## 8.Age	
+```{r}
+# The variable age seems alright. 
+typeof(wv$age)
+table(wv$age)
+typeof(wv$age)
+```
+
+## 9.Income
+```{r}
+# The variable income seems alright
+typeof(wv$income)
+table(wv$income)
+```
+
+## 10.Religious adherence
+```{r}
+# The authors of Hakhverdian und Mayne (2012) code religious adherence into a dummy variable (religious vs not religious), we will do the same. The new variable is called "rel_dummy". 0 means no religious, 1 means religious
+typeof(wv$rel_adherence)
+wv$rel_dummy[wv$rel_adherence==0] <- 0
+wv$rel_dummy[wv$rel_adherence>0] <- 1
+
+table(wv$rel_adherence) #0 means not religious
+table(wv$rel_dummy)
+
+# Checking the results
+table(wv$rel_adherence,wv$rel_dummy)
+table(wv$rel_dummy)
+wv$rel_dummy <- as.factor(wv$rel_dummy)
+typeof(wv$rel_dummy)
+```
+
+## 11.Religiosity
+(How often do you attend religious services)
+```{r}
+# The authors of Hakhverdian und Mayne (2012) are unclear about religiosity variable, Paper and Appendix tell different codings. For now we create a variable "church_dummy" indicating 0 = not going to church often, and 1 = going to church often (more explanation see codebook). But we are also leaving religiousity as it is. 
+wv$rel_attend=wv$religiosity
+
+typeof(wv$religiosity)
+wv$church_dummy[wv$religiosity>=4] <- 0
+wv$church_dummy[wv$religiosity<4] <- 1
+
+# Checking the results
+table(wv$church_dummy)
+table(wv$religiosity,wv$church_dummy)
+```
+
+## 12.Social Trust
+("Most people can be trusted")
+```{r}
+# so far social_trust is coded 1 and 2, we recode it to 0 and 1 and call the variable "trust_dummy"
+wv$trust_dummy[wv$social_trust==1] <- 1
+wv$trust_dummy[wv$social_trust==2] <- 0
+
+# checking the results
+table(wv$social_trust, wv$trust_dummy)
+```
+
+## 13.Satisfaction with Economy
+
+```{r}
+# seems alright
+typeof(wv$econ_satis)
+table(wv$econ_satis)
+typeof(wv$econ_satis)
+```
+
+## 14.Income level of a country
+```{r}
+# the variable is an alternative to econ_satis, in the following, the variable is coded as ordered factor instead of a character variable and the name is changed to country_income
+#HERE
+typeof(wv$income_country)
+wv$country_income <- as.factor(wv$income_country)
+wv$country_income <- as.ordered(wv$country_income)
+levels(wv$country_income)
+table(wv$country_income)
+```
+
+## 15.GDP per capita
+```{r}
+typeof(wv$gdp)
+# gdp is of type "character", therefore we transform it into a numerical variable, furthermore, some decimals are seperated with commas, so we replace them with dots
+#> x <- "R Tutorial"
+#> gsub("ut","ot",x)
+wv$gdp <- as.numeric(gsub(",",".", gsub("\\.", ".", wv$gdp)))
+
+# checking the results
+typeof(wv$gdp)
+sum(is.na(wv$gdp))  # we are producing missing values after we changed the type
+
+table(wv$country_name)
+
+sqldf('select gdp,country_name  from wv WHERE country_name="Libya"') #this is because of Libya has missing values in gdp, therefore we are also dropping Libya as country
+
+wv_1=wv[!is.na(wv$gdp), ]
+dim(wv)
+dim(wv_1)
+
+```
+
+## 16.Level of Unemployment per country
+```{r}
+typeof(wv_1$unemployment)
+#Here
+# unemployment is of type "character", therefore we transform it into a numerical variable, furthermore, some decimals are seperated with commas, so we replace them with dots
+wv_1$unemployment <- as.numeric(gsub(",",".", gsub("\\.", ".", wv_1$unemployment)))
+
+# checking the results
+table(wv_1$unemployment)
+typeof(wv_1$unemployment)
+
+sum(is.na(wv_1$unemployment))
+
+```
+
+## 17. Countries categorized in regions
+```{r}
+# In the following, the variable is coded as factor instead of a character variable
+typeof(wv_1$region)
+wv_1$region <- as.factor(wv_1$region)
+levels(wv_1$region)
+table(wv_1$region)
+```
+
+```{r}
+colnames(wv_1)
+```
+
+## 18.Recoding the variables for modeling:
+```{r}
+wv_1$male <- as.factor(wv_1$male)
+wv_1$edu <- as.factor(wv_1$edu)
+wv_1$church_dummy <- as.factor(wv_1$church_dummy)
+wv_1$trust_dummy <- as.factor(wv_1$trust_dummy)
+wv_1$political_trust_ordered <- as.factor(wv_1$political_trust_ordered)
+```
+
+```{r}
+#checking missingness one last time
+#install.packages('dplyr')
+library(dplyr)
+i=1
+n=dim(wv_1)[2]
+while(i<n){
+  colname=colnames(wv_1)[i]
+  data<- select(wv_1,colname)
+  print(colnames(wv_1)[i])
+  print(sum(is.na(data)))
+  i=i+1 }
+
+```
+
+
+Saving the final Dataset
+```{r}
+head(wv_1)
+
+final_wv6_recoded=wv_1[,c("country_name",    "id" ,  "survey_year", "political_trust_ordered",
+"cpi" ,  "age" , "income", "econ_satis",     "gdp" ,"unemployment", "social_trust",    
+"region", "democ_index", "edu" , "male" ,  "rel_dummy", "church_dummy","rel_adherence", "trust_dummy",   "country_income")]
+
+save(final_wv6_recoded,file="3_RecodedVariables_wv6_all.Rdata")
+
+write.csv(final_wv6_recoded, file = "3_RecodedVariables_wv6_all.csv")
+```	
+	
+

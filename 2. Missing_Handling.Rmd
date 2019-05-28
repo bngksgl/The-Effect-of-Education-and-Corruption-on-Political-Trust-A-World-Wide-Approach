@@ -1,0 +1,263 @@
+---
+title: "| AQM Paper- Missing Handling"
+author: "Roman, Bengi, Annika"
+date: "5 June 2018"
+output:
+  html_notebook:
+    toc: yes
+  html_document: default
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+```{r}
+# Loading the needed packages
+p_needed <- c("knitr", "MASS", "ggplot2", "ggthemes", "reshape2", "scales", "pROC", "countrycode", "pandas", "striprtf", "sqldf", "gdata", "foreign", "readxl", "data.table")
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+```
+
+```{r}
+load("1_DataProceesing_wv6_all.Rdata") #new data
+load("WV6_Data_R_v_2016_01_01.RData") #original data
+wv6<-data.frame(WV6_Data_R)
+```
+
+```{r}
+head(final_wv6)
+```
+
+# 1.Looking at the Missing Values
+```{r}
+# exclude variables v1, v2, v3
+myvars <- names(final_wv6) %in% c("individual_cp", "religiosity") 
+final_wv6_2 <- final_wv6[!myvars]
+
+i=1
+n=dim(final_wv6_2)[2]
+while(i<n){
+  print(colnames(final_wv6_2[i]))
+  print(sum(is.na(final_wv6_2[,i])))
+  i=i+1 }
+
+```
+# 2.Analyzing Missing Values
+
+## 2.1. Political Trust: 
+
+Drop all the observations that have no political trsut value. Because, this is our dependent variable. We don't have any missing values, so we don't need to delete anything.
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), political_trust_ordered from final_wv6_2 WHERE political_trust_ordered IS NULL GROUP BY country_name,political_trust_ordered ORDER BY COUNT(id) ')
+```
+
+## 2.2.Education: 
+
+Drop every observation that have missing values, because education is one of our main independent variables.
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), education from final_wv6_2 WHERE education IS NULL GROUP BY country_name,education ORDER BY COUNT(id) ')
+```
+
+```{r}
+#final_wv6_2 <- na.omit(final_wv6$political_trust)
+final_wv6_3=final_wv6_2[!is.na(final_wv6_2$education), ]
+dim(final_wv6_2)
+dim(final_wv6_3)
+```
+
+
+## 2.3.World Bank Corruption: 
+
+This was planned to be our independent variable to test the robustness of CPI index, however due to having lots of missingness, we decided to drop the whole column
+```{r}
+library(dplyr)
+table(final_wv6_3$wb_corr) #we have 70981 null values
+dim(final_wv6_3)
+final_wv6_4 <- select(final_wv6_3, -wb_corr)
+dim(final_wv6_4)
+```
+## 2.4.Gender: Drop every observation that have missing values.
+
+```{r}
+sum(is.na(final_wv6_4$gender))
+```
+
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), gender from final_wv6_4 WHERE gender IS NULL')
+```
+
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$gender), ]
+dim(final_wv6_4)
+```
+
+## 2.5.Age:
+Drop every observation with missing values
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), age from final_wv6_4 WHERE age IS NULL GROUP BY country_name,age ORDER BY COUNT(id) ')
+```
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$age), ]
+dim(final_wv6_4)
+```
+
+## 2.6.Income:
+Netherlands, Japan, Morocco, China have high missing values. We examined teach country and noticed that most of the missingness are due to assigning -2 and -1. (-2) stands for not anwering the question where as (-1) stands for I don't know. After examining it for each country individually, we decided to drop the individuals that haven't answered the question it. 
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), income from final_wv6_4 WHERE income IS NULL GROUP BY country_name,income ORDER BY COUNT(id) ')
+```
+
+
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$income), ]
+dim(final_wv6_4)
+```
+
+
+## 2.7.Religious Adherence: 
+Unusually missingness in Egypt, Bahrain, Qatar, Kuwait and Egypt.
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), rel_adherence from final_wv6_4 WHERE rel_adherence IS NULL GROUP BY country_name,rel_adherence ORDER BY COUNT(id) ')
+```
+
+Case -4 stands for  'Not asked in survey'. Since we know that %90 percent of the population of Egypt, Kuwait, Bahrain and Qatar  are muslims, we decided to assign muslim for rel adherence rather than dropping the country.
+
+```{r}
+final_wv6_4$rel_adherence[final_wv6_4$country_name=='Egypt, Arab Rep.']<-49
+final_wv6_4$rel_adherence[final_wv6_4$country_name=='Bahrain']<-49
+final_wv6_4$rel_adherence[final_wv6_4$country_name=='Qatar']<-49
+final_wv6_4$rel_adherence[final_wv6_4$country_name=='Kuwait']<-49
+```
+
+```{r}
+sqldf('select distinct country_name, COUNT(id), rel_adherence from final_wv6_4 GROUP BY country_name,rel_adherence ORDER BY COUNT(id) ')
+```
+We decided to remove rest of the missing data. 
+
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$rel_adherence), ]
+dim(final_wv6_4)
+```
+
+## 2.8.Religiosity2: 
+206 missing (Japan)
+```{r}
+library('sqldf')
+sqldf('select distinct country_name, COUNT(id), religiosity2 from final_wv6_4 WHERE religiosity2 IS NULL GROUP BY country_name,religiosity2 ORDER BY COUNT(id) ')
+```
+
+Case: Japan, -1 stands for 'I don't know'. So there is nothing we can do than to drop observations that have missing values.
+
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$religiosity2), ]
+dim(final_wv6_4)
+```
+
+## 2.9. Social Trust: 
+India has 237 missing variables.
+```{r}
+sqldf('select distinct country_name, COUNT(id), social_trust from final_wv6_4 WHERE social_trust IS NULL GROUP BY country_name,social_trust ORDER BY COUNT(id) ')
+```
+
+-1 stands for 'Don??t know'. So there is nothing we can do than to drop observations that have missing values.
+
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$social_trust), ]
+dim(final_wv6_4)
+```
+
+
+## 2.10. Social Trust:  
+Economic Satisfaction: Missingness is not really high on the country level, therefore we can just drop observations that have missing values.
+```{r}
+sqldf('select distinct country_name, COUNT(id), econ_satis from final_wv6_4 WHERE econ_satis IS NULL GROUP BY country_name,econ_satis ORDER BY COUNT(id) ')
+```
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$econ_satis), ]
+dim(final_wv6_4)
+```
+
+
+## 2.11. Income Country: 
+All the missingness is due to Taiwan. But we haven't decided whether we are going to use this variable in our analysis, or not, so we just leave as it is.
+```{r}
+sqldf('select distinct country_name, COUNT(id), income_country from final_wv6_4 GROUP BY country_name,income_country ORDER BY COUNT(id) ')
+```
+
+## 2.12.GDP: 
+All the missingness is due to Taiwan. This time, we should drop this country, from our dataset because GDP is a variable where we are definetly going to use.
+
+```{r}
+sqldf('select distinct country_name, COUNT(id), gdp from final_wv6_4 WHERE gdp IS NULL GROUP BY country_name,gdp ORDER BY COUNT(id) ')
+```
+```{r}
+final_wv6_4=final_wv6_4[!is.na(final_wv6_4$gdp), ]
+dim(final_wv6_4)
+```
+
+## 2.12.Unemployment: 
+No missingness is present. The missingness in unemployment was due to having Taiwan in our dataset, once we dropped it, missingness no longer present in unemployment
+```{r}
+sqldf('select distinct country_name, COUNT(id), unemployment from final_wv6_4 WHERE unemployment IS NULL GROUP BY country_name,unemployment ORDER BY COUNT(id) ')
+```
+
+## 2.13.Region: 
+No missingness is present. The missingness in region was due to having Taiwan in our dataset, once we dropped it, missingness no longer present in region variable.
+```{r}
+sqldf('select distinct country_name, COUNT(id), region from final_wv6_4 WHERE region IS NULL GROUP BY country_name,region ORDER BY COUNT(id) ')
+```
+
+Checking the last dataset:
+```{r}
+head(final_wv6_4)
+```
+
+```{r}
+now=sqldf('select distinct country_name, COUNT(id) AS new_num from final_wv6_4 GROUP BY country_name ORDER BY COUNT(id)')
+now
+```
+
+
+```{r}
+old=sqldf('select distinct country_name, COUNT(id) AS old_num from final_wv6 GROUP BY country_name ORDER BY COUNT(id)')
+old
+```
+
+We lost most of our values from Japan, but this okey as we still have a lot of values for Japan
+```{r}
+sqldf('select distinct old.country_name, old.old_num AS old_number, now.new_num AS new_number, (old.old_num-now.new_num) AS dif from old LEFT JOIN now ON (now.country_name=old.country_name) ORDER BY dif')
+```
+Checking missingness for the last time:
+```{r}
+#install.packages('dplyr')
+library(dplyr)
+i=1
+n=dim(final_wv6_4)[2]
+while(i<n){
+  colname=colnames(final_wv6_4)[i]
+  data<- select(final_wv6_4,colname)
+  print(colnames(final_wv6_4)[i])
+  print(sum(is.na(data)))
+  i=i+1 }
+```
+
+```{r}
+dim(final_wv6_4)
+save(final_wv6_4,file="2_DataMissingness_wv6_all.Rdata")
+```
+
+
+
+
+
+

@@ -1,0 +1,588 @@
+---
+title: "| AQM Paper-Data Preprocessing"
+author: "Roman, Bengi, Annika"
+date: "5 June 2018"
+output:
+  html_notebook:
+    toc: yes
+  html_document: default
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+```{r results='hide', message=FALSE, warning=FALSE}
+
+# Loading the needed packages
+p_needed <- c("knitr", "MASS", "ggplot2", "ggthemes", "reshape2", "scales", "pROC", "countrycode", "pandas", "striprtf", "sqldf", "gdata", "foreign", "readxl", "data.table")
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+
+```
+
+# 1. Loading and subsetting the World Value Survey
+## World Value Survey 6
+
+```{r results='hide'}
+# Load wv6
+load("WV6_Data_R_v_2016_01_01.RData")
+wv6<-data.frame(WV6_Data_R)
+```
+
+
+## Subsetting variables and countries
+The dataset is quite big, therefore we reduce it to the variables we need in our analysis. 
+
+```{r results='hide'}
+
+dim(wv6) #90350
+wv6_0 <- wv6
+dim(wv6_0) 
+table(wv6_0$V2) 
+dim(table(wv6_0$V2))
+
+wv6_1 <- subset(wv6_0, select = c(V2, V59, V3, V113, V114, V116, V117, V228, V262, V240, V242, V248, V239, V144, V145, V9, V24, V228, MN_228M, MN_228N, MN_228Q))
+```
+
+
+# 2.Merging External Datasets
+
+## 2.1.Country names:
+The wv6 only contains numerical country codes, not the countries names. Therefore, we merge a list with country names matching to the country code in the WV-Survey. Retrieved from https://github.com/svmiller/wvsccodes/blob/master/wvs-cow-ccodes-table.csv"
+
+```{r results='hide'}
+
+# Adding the country names
+country_names <- fread("country_names.csv")
+wv6_2 <- merge(wv6_1, country_names,by="V2")
+library('sqldf')
+sqldf('select distinct V2,country from wv6_2')
+```
+
+
+## 2.2.World Bank 
+
+In the following part, we add external variables retrieved from World Bank datasets on the country level. We merged some of the datasets together beforehand into one csv file, to make our R-Code here less messy. The variables are: Region, income classification, World Bank Corruption Index, gdp, level of unemployment, 
+
+### 2.2.1.Region Variable
+
+A variable which categorizes countries into different regions. Retrieved from "https://datahelpdesk.worldbank.org/knowledgebase/articles/906519-world-bank-country-and-lending-groups".
+
+### 2.2.2.Income Classification
+
+A variable which categorizes countries by income. Retrieved from "https://datahelpdesk.worldbank.org/knowledgebase/articles/906519-world-bank-country-and-lending-groups".
+Contains the 4 categories: 	Low-income economies, Lower-middle-income economies, Upper-middle-income economies, High-income economies.
+Note: Not a part the paper we were inspired from, but nevertheless a interesting control variable similar to the unemployment rate and economic situation of a country, so we included it into the preprocession part, just in case. This variable is not used in our models.
+
+### 2.2.3.World Bank Corruption Index
+
+World Bank Corruption Index for year 2010, 2011, 2012, 2013 and 2014. Retrieved from "https://data.worldbank.org/indicator/IQ.CPA.TRAN.XQ?end=2016&start=2008". Due to lots of missingness in this index, this is eliminated in later steps and not used in our models.
+
+```{r results='hide'}
+
+# Adding the World Bank Data
+wb_data <- fread("wb_region_income_corr_index.csv")
+
+# Additional steps which are required to make the World Bank data compatiple to the wv6
+# Make the Country names compatible to the WVS country code, using the countrycode package
+wb_data$country_com <- countrycode(wb_data$country_code, 'wb', 'wvs')
+
+# Some values could not be matched, therefore, we checked whether this concernes the countries we are interested in. This is not the case, therefore we can merge the wb_data. 
+# Check for missing
+y <- is.na(wb_data$country_com) # returns TRUE of x is missing
+table(y)
+
+# Rename country_com to V2 to make merging easier
+colnames(wb_data)[10] <- "V2"
+
+# Among the countries in our wv6 subset, Taiwan is not included into the WB Data, therefore we add a Taiwan row with Missing to the wb_data, then we can decided later on whether we exclude Taiwan from the analysis
+# Issue: More countries than Taiwan have missins on the WB Corruption colums, however the countries are included as rows in the WorldBank dataset, so we can later take care of the missing values
+
+new.row <- head(wb_data[NA,], 1)
+new.row$country_name[is.na(new.row$country_name)] <- "Taiwan"
+new.row$V2[is.na(new.row$V2)] <- 158
+wb_data_1 <- rbind(wb_data, new.row)
+
+# Merge the WB data to wv6_2
+wv6_3 <- merge(wv6_2, wb_data_1 ,by="V2")
+
+```
+
+### 2.2.4.GDP
+The GDP Data per capita and per country for the year 2010-2014 is retrieved from the World Bank:
+http://databank.worldbank.org/data/reports.aspx?source=2&series=NY.GDP.PCAP.PP.KD#
+Thereby, we face the problem that amoung the countries, we don't have the GDP values for Taiwan.
+
+```{r}
+# Loading the GDP data (the relevant years have been merged together beforehand)
+gdp <- fread("gdp_new.csv", header = TRUE)
+
+# Renaming the columns 
+colnames(gdp)[1]="country"
+colnames(gdp)[2]="gdp10"
+colnames(gdp)[3]="gdp11"
+colnames(gdp)[4]="gdp12"
+colnames(gdp)[5]="gdp13"
+colnames(gdp)[6]="gdp14"
+
+# Additional steps which are required to make the GDP data compatiple to the wv6
+
+# Make the country names compatible to the WVS country code, using the countrycode package
+gdp$country_com <- countrycode(gdp$country, 'country.name', 'wvs')
+# -> As before when merging other external datasets, some values could not be matched, however, this does not concern the countries we are interested in.
+
+# Rename country_com to V2 to make merging easier
+colnames(gdp)[7] <- "V2"
+
+# Among the countries in our wv6 subset, Taiwan is as before not included into the GDP Data, therefore we add a Taiwan row with Missing to the GDP, then we can decide later on whether we exclude Taiwan from the analysis
+new.row1 <- head(gdp[NA,], 1)
+new.row1$country[is.na(new.row1$country)] <- "Taiwan"
+new.row1$V2[is.na(new.row1$V2)] <- 158
+gdp_1 <- rbind(gdp, new.row1)
+
+# Merge the CPI data to wv6
+wv6_4 <- merge(wv6_3, gdp_1 , by="V2")
+
+length(table(wv6_4$country_name))
+```
+### 2.2.5.Level of Unemployment
+
+The level of unemployment is retrieved from an external Dataset from the World Bank:  https://data.worldbank.org/indicator/SL.UEM.TOTL.NE.ZS?end=2016&start=1960&view=chart.
+As before, we do not have the value for Taiwan.
+```{r results='hide', message=FALSE, warning=FALSE}
+# Loading the unemployment data (the relevant years have been merged together beforehand)
+unemployment <- fread("unemployment_new.csv", header = TRUE)
+
+# Renaming the columns 
+colnames(unemployment)[1]="country"
+colnames(unemployment)[2]="unemployment10"
+colnames(unemployment)[3]="unemployment11"
+colnames(unemployment)[4]="unemployment12"
+colnames(unemployment)[5]="unemployment13"
+colnames(unemployment)[6]="unemployment14"
+
+# Additional steps which are required to make the unemployment data compatiple to the wv6
+
+# Make the country names compatible to the WVS country code, using the countrycode package
+unemployment$country_com <- countrycode(unemployment$country, 'country.name', 'wvs')
+
+# Rename country_com to V2 to make merging easier
+colnames(unemployment)[7] <- "V2"
+
+# Among the countries in our wv6 subset, Taiwan is as before not included into the unemployment Data. Therefore, we add a Taiwan row with missings to the unemployment data, except for country and code, then we can decided later on whether we exclude Taiwan from the analysis.
+new.row2 <- head(unemployment[NA,], 1)
+new.row2$country[is.na(new.row1$country)] <- "Taiwan"
+new.row2$V2[is.na(new.row2$V2)] <- 158
+unemployment_1 <- rbind(unemployment, new.row2)
+
+# Merge the unemployment data to wv6
+wv6_5 <- merge(wv6_4, unemployment_1 , by="V2")
+
+```
+
+## 2.3.Transparency international corruption index
+In the following part, we add the Transparency international corruption index for year 2010, 2011, 2012, 2013 and 2014. Retrieved from https://www.transparency.org/research/cpi/overview.
+Problem: Before 2012, the Corruption index is measured as a value between 0-10 whereas after 2011, it started to be a mesaure between 0-100. Consequenlty, we matched the CPI values corresponding to their years and for the years after 2011, we divide the measure with 10, in order to equal the scales. The country 'West Bank and Gaza'are eliminated from the dataset, since Palestine doesn't have a cpi.
+
+```{r results='hide'}
+# Loading the CPI data for each year
+cpi_2010 <- fread("CPI2010_new.csv")
+cpi_2011 <- fread("CPI2011_new.csv")
+cpi_2012 <- fread("CPI2012_new.csv")
+cpi_2013 <- fread("CPI2013_new.csv")
+cpi_2014 <- fread("CPI2014_new.csv")
+
+# Renaming the columns and adjust scale
+colnames(cpi_2010)[1]="country"
+colnames(cpi_2010)[2]="cpi10"
+colnames(cpi_2011)[1]="country"
+colnames(cpi_2011)[2]="cpi11"
+colnames(cpi_2012)[1]="country"
+colnames(cpi_2012)[2]="cpi12"
+cpi_2012$cpi12=cpi_2012$cpi12/10
+colnames(cpi_2013)[1]="country"
+colnames(cpi_2013)[2]="cpi13"
+cpi_2013$cpi13=cpi_2013$cpi13/10
+colnames(cpi_2014)[1]="country"
+colnames(cpi_2014)[2]="cpi14"
+cpi_2014$cpi14=cpi_2014$cpi14/10
+
+# So far for each survey year we have an external Dataset. In a next step, we merge the external Dataset into one Dataset.
+cpi_1 <- merge(cpi_2010, cpi_2011, by="country")
+cpi_2 <- merge(cpi_1, cpi_2012, by="country")
+cpi_3 <- merge(cpi_2, cpi_2013, by="country")
+cpi_4 <- merge(cpi_3, cpi_2014, by="country")
+
+# Additional steps which are required to make the CPI data compatiple to the wv6
+# Make the Country names compatible to the WVS country code, using the countrycode package
+cpi_4$country_com <- countrycode(cpi_4$country, 'country.name', 'wvs')
+# Rename country_com to V2 to make merging easier
+colnames(cpi_4)[12] <- "V2"
+
+# Merge the CPI data to wv6
+wv6_6 <- merge(wv6_5, cpi_4 , by="V2")
+
+#columns are duplicating
+wv6_6_n <- wv6_6[, !duplicated(colnames(wv6_6))]
+table(colnames(wv6_6_n))
+length(colnames(wv6_6_n))
+length(unique(colnames(wv6_6_n)))
+length(table(wv6_6_n$country_name))
+
+```
+
+```{r results='hide'}
+# Remove unneccessary databases from the environment, so everything beside wv6_6_n
+wv6_7=wv6_6_n
+rm(list=setdiff(ls(), "wv6_7"))
+
+
+```
+
+
+## 2.4.Democracy Index
+For measuring the democracy we used democracy index from economist. The index ranges from 0 to 10, 10 being full democracy where as 1 being authoritirian regime. https://www.economist.com/blogs/graphicdetail/2018/01/daily-chart-21
+
+
+```{r}
+library(data.table)
+# Adding the Democracy Index
+democ <- fread("democracy_index.csv",header=TRUE)
+# Additional steps which are required to make the democracy index data compatiple to the wv6
+# Make the Country names compatible to the WVS country code, using the countrycode package
+democ$country_com <- countrycode(democ$country_code, 'wb', 'wvs')
+
+#Checking the missing countries, and none of them are within our countries, so we can star the join
+sqldf('select distinct Country, COUNT(Country), country_com from democ WHERE country_com IS NULL GROUP BY  Country, country_com')
+
+#taking the year and making it as independent variable
+wv6_7$year <- as.character(wv6_7$V262)
+
+# Rename country_com to V2 to make merging easier
+colnames(democ)[12] <- "V2"
+
+#No missing values are present
+wv6_8 <- merge(wv6_7, democ ,by="V2")
+sqldf('select distinct democ08,democ10,democ11,democ12,democ13,democ14,democ15,democ16,  Country,V2 from wv6_8')
+
+attach(wv6_8)
+democ_1 <-numeric()
+for(x in 1:nrow(wv6_8)){
+  tmp <-get(paste0("democ",substring(wv6_8$year[x],3,5)))
+  democ_1 <- append(democ_1, tmp[x])
+}
+
+
+wv6_8$democ_index <- democ_1
+
+colnames(wv6_8)
+
+sqldf('select distinct country_name,V2, V262, democ10,democ11,democ12,democ13,democ14,democ_index from wv6_8')
+
+```
+
+# 3.Creating the Dependent Variable
+
+The dependent variable political trust is an index variable using trust in the parliament (V117), the police(V113), political parties (V116) and the legal system (V114). Missing values assigned as 0.
+
+     1 'A great deal'   
+     2 'Quite a lot'    
+     3 'Not very much' 
+     4 'None at all'    
+
+
+## 3.1.Political trust
+
+```{r results='hide'}
+attach(wv6_8)
+# Constructing the dependent variable political trust
+
+wv6_8$V113[wv6_8$V113 < 0] <- NA #assiging a random number
+wv6_8$V114[wv6_8$V114 < 0] <- NA
+wv6_8$V116[wv6_8$V116 < 0] <- NA
+wv6_8$V117[wv6_8$V117 < 0] <- NA
+
+# Recode V113
+wv6_8$pt1 <- wv6_8$V113
+wv6_8$pt1[wv6_8$V113>2 | is.na(wv6_8$V113)==TRUE] <- 0
+wv6_8$pt1[wv6_8$V113<=2] <- 1
+table(wv6_8$pt1, wv6_8$V113)
+
+
+# Recode V114
+wv6_8$pt2 <- wv6_8$V114
+wv6_8$pt2[wv6_8$V114>2 | is.na(wv6_8$V114)==TRUE] <- 0
+wv6_8$pt2[wv6_8$V114<=2] <- 1
+table(wv6_8$pt2, wv6_8$V114)
+
+
+# Recode V113
+wv6_8$pt3 <- wv6_8$V116
+wv6_8$pt3[wv6_8$V116>2 | is.na(wv6_8$V116)] <- 0
+wv6_8$pt3[wv6_8$V116<=2] <- 1
+table(wv6_8$pt3, wv6_8$V116)
+
+
+# Recode V113
+wv6_8$pt4 <- wv6_8$V117
+wv6_8$pt4[wv6_8$V117>2 | is.na(wv6_8$V117)==TRUE] <- 0
+wv6_8$pt4[wv6_8$V117<=2] <- 1
+table(wv6_8$pt4, wv6_8$V117)
+
+# Combine the 4 variables
+wv6_8$political_trust_ordered <- wv6_8$pt1 + wv6_8$pt2 + wv6_8$pt3 + wv6_8$pt4
+
+library(sqldf)
+#controlling:
+sqldf('select distinct V113,pt1  from wv6_8')
+sqldf('select distinct V114,pt2  from wv6_8')
+sqldf('select distinct V116,pt3  from wv6_8')
+sqldf('select distinct V117,pt4  from wv6_8')
+sqldf('select distinct pt1,V113,pt2,V114,pt3,V116,pt4,V117, political_trust_ordered  from wv6_8')
+
+
+detach(wv6_8)
+```
+
+## 3.2.Perceived Corruption (alternative dependent variable)
+Here we created an alternative dependent variable using: MN_228M, MN_228N variables. 
+This alternative dependent is created, but not used in the model due to having high missing values. 
+
+```{r results='hide'}
+attach(wv6_8)
+# Perceived Corruption as alternative dependent variable. Index variable 
+
+# Replace negative values as missings
+wv6_8$corr1 <- wv6_8$MN_228M
+wv6_8$corr1[wv6_8$corr1 < 0] <- NA
+
+wv6_8$corr2 <- wv6_8$MN_228N
+wv6_8$corr2[wv6_8$corr2 < 0] <- NA
+
+# Create an index variable using the mean of the corr variables. In case that participants did not answer both questions, we take the value of the answered questions. In this way we avoid that we loose many observations.
+myvars_c <- c("corr1", "corr2")
+test_c<- wv6_8[myvars_c]
+wv6_8$individual_cp <- rowMeans(test_c, na.rm = TRUE)
+
+#controlling:
+sqldf('select distinct corr1,MN_228M from wv6_8')
+sqldf('select distinct corr2,MN_228N  from wv6_8')
+sqldf('select distinct  corr1,MN_228M,corr2,MN_228N,individual_cp  from wv6_8')
+
+
+detach(wv6_8)
+```
+
+# 4.Recoding variables
+
+## 4.1.ID and Survey year
+```{r}
+#Variables which facilitate the preprocessing part
+# Create an id for every observation
+wv6_8$id <- seq.int(nrow(wv6_8))
+
+# Create the variable survey year
+wv6_8$survey_year <- wv6_8$V262
+
+```
+
+
+## 4.2.Constructing Independent Variables
+- Our main independent variables include education, corruption index and democracy index
+- We test our model with the CPI and the World Bank Corruption Data to check for robustness. Consequently, beside the using the CPI, we also construct the independent variables using the World Bank Corruption Index. But this variable won't be used since there are lots of missing values.
+```{r}
+# Constructing the independent variables
+
+# Education
+wv6_8$education <-wv6_8$V248 
+# Exclude Missings
+wv6_8$education[wv6_8$education == -5] <- 1
+wv6_8$education[wv6_8$education < 0] <- NA
+
+#controlling (bengi):
+sqldf('select distinct V248,education from wv6_8')
+
+# CPI
+# So far every year of the CPI has a own column, for the analysis we need one CPI colum per person, depending on the year the participant answered the survey
+wv6_8$year <- as.character(wv6_8$V262)
+
+#controlling (bengi):
+sqldf('select distinct V262,year from wv6_8')
+
+attach(wv6_8)
+cor <-numeric()
+for(x in 1:nrow(wv6_8)){
+  tmp <-get(paste0("cpi",substring(wv6_8$year[x],3,5)))
+  cor<- append(cor, tmp[x])
+}
+detach(wv6_8)
+wv6_8$cpi <- cor
+
+#controlling (bengi):
+sqldf('select distinct cpi,year,cpi10,cpi11,cpi12,cpi13,cpi14 from wv6_8')
+
+# Corruption Index World Bank
+# As above with the CPI, so far every year of the WB Corruption Index has a own column, for the analysis we need colum per person, depending on the year the participant answered the survey
+
+attach(wv6_8) 
+cor_1 <-numeric()
+for(x in 1:nrow(wv6_8)){
+  tmp <-get(paste0("wb_corr_20",substring(wv6_8$year[x],3,5)))
+  cor_1<- append(cor_1, tmp[x])
+}
+detach(wv6_8)
+wv6_8$wb_corr <- cor_1
+
+#controlling (bengi):
+sqldf('select distinct country_name,wb_corr_2010,wb_corr_2011,wb_corr_2012,wb_corr_2013,wb_corr_2014,wb_corr,year from wv6_8')
+
+sqldf('select distinct country_name,wb_corr from wv6_8')
+
+```
+
+## Create the control variables
+```{r}
+
+# Create the variables: Gender, age, income, religious adherence ("rel_adherence"), religiosity, economic status ("econ_satis") social trust, gdp and unemployment rate
+
+
+# Gender
+wv6_8$gender <- wv6_8$V240
+wv6_8$gender[wv6_8$gender < 0] <- NA
+
+
+# Age
+wv6_8$age <- wv6_8$V242
+wv6_8$age[wv6_8$age < 0] <- NA
+
+
+#controlling:
+sqldf('select distinct gender,V240 from wv6_8')
+
+# Income 
+wv6_8$income <- wv6_8$V239
+wv6_8$income[wv6_8$income < 0] <- NA
+
+
+#controlling:
+sqldf('select distinct income,V239 from wv6_8')
+
+# Religious Adherence
+wv6_8$rel_adherence <- wv6_8$V144
+wv6_8$rel_adherence[wv6_8$rel_adherence < 0] <- NA
+
+#controlling:
+sqldf('select distinct rel_adherence,V144 from wv6_8')
+
+# Religiosity
+# Version 1: V145 (How often do you attend religious services)
+# Version 2: V9 (Important in life: Religion)
+
+# Version 1: V145
+wv6_8$religiosity <- wv6_8$V145 
+wv6_8$religiosity[wv6_8$religiosity < 0] <- NA
+
+
+# Version 2: V9
+wv6_8$religiosity2 <- wv6_8$V9 
+wv6_8$religiosity2[wv6_8$religiosity2 < 0] <- NA
+
+#controlling (bengi):
+sqldf('select distinct religiosity2,V9 from wv6_8')
+sqldf('select distinct religiosity,V145 from wv6_8')
+
+
+
+# Satisfaction with the economy
+# For now, V59 Satisfaction with financial situation of household. Version 2: Income group of the country. (Later if we are interested V23-Satisfaction with life).
+
+# Version 1: V59
+wv6_8$econ_satis <- wv6_8$V59
+wv6_8$econ_satis[wv6_8$econ_satis < 0] <- NA
+
+#controlling:
+sqldf('select distinct econ_satis,V59 from wv6_8')
+
+
+# Version 2: Country income
+wv6_8$income_country <- wv6_8$income_group
+
+#controlling:
+sqldf('select distinct income_country,income_group from wv6_8')
+sqldf('select distinct income_country,income_group,country_name from wv6_8 where income_group IS NULL')
+#checking missingness #only taiwan is missing
+
+
+# Social Trust
+# V24 (Most people can be trusted)
+wv6_8$social_trust <- wv6_8$V24
+wv6_8$social_trust[wv6_8$social_trust < 0] <- NA
+
+#controlling:
+sqldf('select distinct social_trust,V24 from wv6_8')
+
+
+
+# GDP per capita
+# As above with the CPI and WB Corruption Index, so far every year of the GDP has a own column, for the analysis we need colum per person, depending on the year the participant answered the survey
+attach(wv6_8)
+gdp_1 <-numeric()
+for(x in 1:nrow(wv6_8)){
+  tmp <-get(paste0("gdp",substring(wv6_8$year[x],3,5)))
+  gdp_1<- append(gdp_1, tmp[x])
+}
+wv6_8$gdp <- gdp_1
+
+
+
+#controlling:
+sqldf('select distinct country_name,year,gdp,gdp10,gdp11, gdp12, gdp13, gdp14 from wv6_8')
+
+
+# Unemployment rate
+#As above so far every year of the unemployment data has a own column, for the analysis we need colum per person, depending on the year the participant answered the survey
+
+unemployment_1 <-numeric()
+for(x in 1:nrow(wv6_8)){
+  tmp <-get(paste0("unemployment",substring(wv6_8$year[x],3,5)))
+  unemployment_1<- append(unemployment_1, tmp[x])
+}
+wv6_8$unemployment <- unemployment_1
+detach(wv6_8)
+
+#controlling:
+sqldf('select distinct country_name,year,unemployment,unemployment10,unemployment11, unemployment12, unemployment13, unemployment14 from wv6_8')
+
+
+
+```
+
+
+# Save the final Dataset
+In the last step, we save the variables we need in a final dataset called final_wv6
+
+```{r}
+# Save the final Dataset
+
+head(wv6_8)
+
+myvars <- c("country_name", "id", "survey_year", "political_trust_ordered", "individual_cp", "education", "cpi", "wb_corr", "gender", "age", "income", "rel_adherence", "religiosity", "religiosity2", "social_trust", "econ_satis", "income_country", "gdp", "unemployment", "region","democ_index")
+final_wv6_last<- wv6_8[myvars]
+
+head(final_wv6_last)
+
+```
+
+
+```{r}
+dim(final_wv6)
+save(final_wv6,file="1_DataProceesing_wv6_all.Rdata")
+
+#election win is missing (15th of April 2018)
+```
+
+
